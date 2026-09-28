@@ -222,8 +222,9 @@ class PlatformController extends MerchantController
         return view('platform.tenant', [
             'tenant' => $tenant,
             'people' => $tenant->users()->with('role')->orderBy('name')->get(),
-            'own' => $tenant->id === $this->user()->tenantId,
-            'me' => $this->user()->id,
+            'own'    => $tenant->id === $this->user()->tenantId,
+            'me'     => $this->user()->id,
+            'plans'  => Plan::query()->where('isActive', true)->orderBy('monthlyPrice')->get(),
         ]);
     }
 
@@ -261,6 +262,99 @@ class PlatformController extends MerchantController
         };
 
         return back()->with('status', $message);
+    }
+
+    public function overrideSubscription(Request $request, Tenant $tenant)
+    {
+        $data = $request->validate([
+            'plan_id'       => ['required', 'string', 'exists:plans,id'],
+            'billing_cycle' => ['required', 'in:MONTHLY,QUARTERLY,ANNUALLY'],
+            'reason'        => ['required', 'string', 'min:10', 'max:500'],
+        ]);
+
+        $plan  = Plan::query()->findOrFail($data['plan_id']);
+        $cycle = $data['billing_cycle'];
+        $admin = $this->user();
+        $now   = now();
+
+        $periodEnd = match ($cycle) {
+            'QUARTERLY' => $now->copy()->addMonths(3),
+            'ANNUALLY'  => $now->copy()->addYear(),
+            default     => $now->copy()->addMonth(),
+        };
+
+        $previous = Subscription::query()->where('tenantId', $tenant->id)->first();
+        $previousPlanName = $previous?->plan?->name ?? 'none';
+
+        Subscription::query()->updateOrCreate(
+            ['tenantId' => $tenant->id],
+            [
+                'planId'             => $plan->id,
+                'status'             => 'ACTIVE',
+                'billingCycle'       => $cycle,
+                'currentPeriodStart' => $now,
+                'currentPeriodEnd'   => $periodEnd,
+                'gracePeriodDays'    => 7,
+                'gracePeriodEndsAt'  => $periodEnd->copy()->addDays(7),
+                'lastRenewedAt'      => $now,
+                'nextBillingDate'    => $periodEnd,
+                'cancelAtPeriodEnd'  => false,
+                'cancelledAt'       => null,
+                'cancellationReason' => null,
+            ]
+        );
+
+        // Audit log
+        \App\Models\AuditLog::query()->create([
+            'tenantId'    => $tenant->id,
+            'userId'      => $admin->id,
+            'action'      => 'SETTINGS_UPDATED',
+            'details'     => [
+                'type'         => 'PLAN_OVERRIDE',
+                'fromPlan'     => $previousPlanName,
+                'toPlan'       => $plan->name,
+                'billingCycle' => $cycle,
+                'reason'       => $data['reason'],
+                'adminId'      => $admin->id,
+                'adminName'    => $admin->name,
+            ],
+            'ipAddress'   => $request->ip(),
+            'timestamp'   => $now,
+        ]);
+
+        // In-app notification to merchant
+        \App\Models\Notification::query()->create([
+            'tenantId'  => $tenant->id,
+            'type'      => 'SYSTEM',
+            'title'     => 'Plan updated by SalesDock',
+            'message'   => 'Your plan has been changed to ' . $plan->name . ' (' . $cycle . ') by the SalesDock team.',
+            'isRead'    => false,
+            'createdAt' => $now,
+        ]);
+
+        // Email the tenant owner
+        $owner = \App\Models\User::query()
+            ->where('tenantId', $tenant->id)
+            ->whereHas('role', fn ($q) => $q->where('name', 'Owner'))
+            ->first();
+
+        if ($owner?->email) {
+            \App\Support\AuthMail::send($owner->email, $owner->name, 'Your SalesDock plan has been updated', [
+                'preheader'  => 'Your plan has been changed to ' . $plan->name . '.',
+                'heading'    => 'Plan updated',
+                'kicker'     => $tenant->name,
+                'paragraphs' => [
+                    'Hi <strong style="color:#111827;">' . e($owner->name) . '</strong>, your SalesDock plan has been updated by our team.',
+                    'Your account for <strong>' . e($tenant->name) . '</strong> is now on the <strong>' . e($plan->name) . '</strong> plan (' . strtolower($cycle) . ' billing), effective immediately.',
+                    'Your new period ends on <strong>' . $periodEnd->timezone('Africa/Lagos')->format('d M Y') . '</strong>.',
+                ],
+                'url'    => route('billing'),
+                'label'  => 'View billing',
+                'note'   => 'If you have questions about this change, please contact our support team.',
+            ]);
+        }
+
+        return back()->with('status', 'Plan overridden to ' . $plan->name . ' for ' . $tenant->name . '.');
     }
 
     public function destroyTenant(Tenant $tenant)

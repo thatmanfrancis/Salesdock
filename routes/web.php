@@ -46,6 +46,17 @@ Route::get('/pay/{invoice}', [PaymentController::class, 'checkout'])->name('bill
 Route::get('/billing/verify', [PaymentController::class, 'verify'])->name('billing.verify');
 Route::post('/billing/webhook', [PaymentController::class, 'webhook'])->name('billing.webhook');
 
+// HTTP scheduler endpoint — pinged every minute by cron-job.org (no cPanel cron needed)
+Route::get('/scheduler/run', function (\Illuminate\Http\Request $request) {
+    $token = trim((string) config('app.scheduler_token', ''));
+    if ($token === '' || ! hash_equals($token, (string) $request->query('token', ''))) {
+        abort(403);
+    }
+    \Illuminate\Support\Facades\Artisan::call('schedule:run');
+    return response('OK ' . now()->toIso8601String(), 200)
+        ->header('Content-Type', 'text/plain');
+})->name('scheduler.run');
+
 Route::prefix('store/{slug}')->group(function () {
     Route::get('/', [StorefrontController::class, 'show'])->name('store.show');
     Route::get('/products/{product}', [StorefrontController::class, 'product'])->name('store.product');
@@ -186,6 +197,7 @@ Route::middleware('auth')->group(function () {
             Route::get('/tenants', [PlatformController::class, 'tenants'])->name('admin.tenants');
             Route::get('/tenants/{tenant}', [PlatformController::class, 'tenant'])->name('admin.tenants.show');
             Route::post('/tenants/{tenant}', [PlatformController::class, 'updateTenant'])->name('admin.tenants.update');
+            Route::post('/tenants/{tenant}/subscription', [PlatformController::class, 'overrideSubscription'])->name('admin.tenants.subscription');
             Route::delete('/tenants/{tenant}', [PlatformController::class, 'destroyTenant'])->name('admin.tenants.destroy');
             Route::delete('/tenants/{tenant}/users/{user}', [PlatformController::class, 'destroyUser'])->name('admin.tenants.users.destroy');
             Route::get('/subscriptions', [PlatformController::class, 'subscriptions'])->name('admin.subscriptions');

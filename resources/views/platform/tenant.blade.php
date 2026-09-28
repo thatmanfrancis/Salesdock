@@ -169,6 +169,44 @@
                         <p class="empty">No subscription on this shop.</p>
                     @endif
                 </section>
+
+                <section class="card">
+                    <p class="kicker">Plan Override</p>
+                    <p class="muted" style="margin-bottom:0.75rem">Change this shop's plan immediately without requiring payment. A reason is mandatory and logged to the audit trail.</p>
+                    @if ($plans->isEmpty())
+                        <p class="muted">No active plans.</p>
+                    @else
+                    <form method="post" action="{{ route('admin.tenants.subscription', $tenant) }}" data-busy>
+                        @csrf
+                        <div class="ui-field">
+                            <span>Plan <span class="req">*</span></span>
+                            <select name="plan_id">
+                                @foreach ($plans as $plan)
+                                    <option value="{{ $plan->id }}"
+                                        @if ($tenant->subscription?->planId === $plan->id) selected @endif>
+                                        {{ $plan->name }} — ₦{{ number_format((float)$plan->monthlyPrice, 0) }}/mo
+                                    </option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="ui-field" style="margin-top:0.5rem">
+                            <span>Billing cycle <span class="req">*</span></span>
+                            <select name="billing_cycle">
+                                <option value="MONTHLY" @if(($tenant->subscription?->billingCycle ?? 'MONTHLY') === 'MONTHLY') selected @endif>Monthly</option>
+                                <option value="QUARTERLY" @if($tenant->subscription?->billingCycle === 'QUARTERLY') selected @endif>Quarterly</option>
+                                <option value="ANNUALLY" @if($tenant->subscription?->billingCycle === 'ANNUALLY') selected @endif>Annually</option>
+                            </select>
+                        </div>
+                        <div class="ui-field" style="margin-top:0.5rem">
+                            <span>Reason <span class="req">*</span></span>
+                            <textarea name="reason" rows="3" maxlength="500" required placeholder="e.g. Courtesy upgrade for beta testing…"></textarea>
+                        </div>
+                        <div style="margin-top:0.65rem">
+                            <button type="submit" data-loading="Applying…"><span data-label>Apply override</span></button>
+                        </div>
+                    </form>
+                    @endif
+                </section>
             </aside>
         </div>
     </div>

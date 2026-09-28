@@ -68,6 +68,22 @@
                 <span>Your workspace is in preview. Choose a plan to unlock selling, inventory, and staff tools.</span>
                 <a href="{{ route('billing') }}">Choose a plan</a>
             </div>
+        @elseif (($subscription ?? null) && $subscription->status === 'PAST_DUE')
+            @php
+                $graceEnds = $subscription->gracePeriodEndsAt;
+                $daysLeft  = $graceEnds ? max(0, (int) now()->diffInDays($graceEnds, false)) : 0;
+            @endphp
+            <div class="banner banner-warn">
+                <span>
+                    Your subscription has expired.
+                    @if ($daysLeft > 0)
+                        You have <strong>{{ $daysLeft }} day{{ $daysLeft === 1 ? '' : 's' }}</strong> before your account moves to the free plan.
+                    @else
+                        Your account will be moved to the free plan shortly.
+                    @endif
+                </span>
+                <a href="{{ route('billing') }}">Renew now</a>
+            </div>
         @endif
         @if (session('status'))
             <p class="flash ok">{{ session('status') }}</p>
