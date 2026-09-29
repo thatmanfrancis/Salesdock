@@ -3,12 +3,14 @@
 @section('title', 'Pay | '.$config->storeName)
 
 @section('content')
-    <section>
-        <h2>Pay ₦{{ number_format($order->netAmount, 2) }}</h2>
+    <section class="sf-panel sf-pay">
+        <h1>Pay ₦{{ number_format($order->netAmount, 2) }}</h1>
+        <p class="muted">Order {{ $order->paymentRef }} · {{ $config->storeName }}</p>
         @if ($publicKey)
-            <button type="button" id="pay">Pay with Flutterwave</button>
+            <button type="button" id="pay" class="sf-btn">Pay with Flutterwave</button>
         @else
             <p>Card checkout is not configured. Your order reference is {{ $order->paymentRef }}.</p>
+            <a class="sf-btn ghost" href="{{ route('store.order', [$tenant->slug, $order->paymentRef]) }}">View order</a>
         @endif
     </section>
     @if ($publicKey)

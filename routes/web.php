@@ -2,8 +2,6 @@
 
 use App\Http\Controllers\Admin\RegistrationReviewController;
 use App\Http\Controllers\Admin\SupportController as AdminSupportController;
-use App\Http\Controllers\Merchant\SupportController;
-use App\Models\User;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\PasswordController;
 use App\Http\Controllers\Auth\RegisterController;
@@ -12,8 +10,13 @@ use App\Http\Controllers\Auth\VerifyEmailController;
 use App\Http\Controllers\Billing\PaymentController;
 use App\Http\Controllers\Merchant\DeskController;
 use App\Http\Controllers\Merchant\OfficeController;
+use App\Http\Controllers\Merchant\SupportController;
 use App\Http\Controllers\Platform\PlatformController;
 use App\Http\Controllers\Storefront\StorefrontController;
+use App\Models\Plan;
+use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 
@@ -22,7 +25,8 @@ Route::get('/', function () {
     if ($user instanceof User) {
         return redirect($user->homePath());
     }
-    $plans = \App\Models\Plan::query()->where('isActive', true)->orderBy('monthlyPrice')->get();
+    $plans = Plan::query()->where('isActive', true)->orderBy('monthlyPrice')->get();
+
     return view('home', ['plans' => $plans]);
 })->name('home');
 
@@ -47,20 +51,26 @@ Route::get('/billing/verify', [PaymentController::class, 'verify'])->name('billi
 Route::post('/billing/webhook', [PaymentController::class, 'webhook'])->name('billing.webhook');
 
 // HTTP scheduler endpoint — pinged every minute by cron-job.org (no cPanel cron needed)
-Route::get('/scheduler/run', function (\Illuminate\Http\Request $request) {
+Route::get('/scheduler/run', function (Request $request) {
     $token = trim((string) config('app.scheduler_token', ''));
     if ($token === '' || ! hash_equals($token, (string) $request->query('token', ''))) {
         abort(403);
     }
-    \Illuminate\Support\Facades\Artisan::call('schedule:run');
-    return response('OK ' . now()->toIso8601String(), 200)
+    Artisan::call('schedule:run');
+
+    return response('OK '.now()->toIso8601String(), 200)
         ->header('Content-Type', 'text/plain');
 })->name('scheduler.run');
 
 Route::prefix('store/{slug}')->group(function () {
     Route::get('/', [StorefrontController::class, 'show'])->name('store.show');
     Route::get('/products/{product}', [StorefrontController::class, 'product'])->name('store.product');
-    Route::post('/checkout', [StorefrontController::class, 'checkout'])->name('store.checkout');
+    Route::get('/cart', [StorefrontController::class, 'cart'])->name('store.cart');
+    Route::post('/cart', [StorefrontController::class, 'addToCart'])->name('store.cart.add');
+    Route::put('/cart', [StorefrontController::class, 'updateCart'])->name('store.cart.update');
+    Route::delete('/cart', [StorefrontController::class, 'removeFromCart'])->name('store.cart.remove');
+    Route::get('/checkout', [StorefrontController::class, 'checkoutForm'])->name('store.checkout');
+    Route::post('/checkout', [StorefrontController::class, 'checkout'])->name('store.checkout.store');
     Route::get('/pay/{ref}', [StorefrontController::class, 'pay'])->name('store.pay');
     Route::get('/orders/{ref}', [StorefrontController::class, 'order'])->name('store.order');
 });
