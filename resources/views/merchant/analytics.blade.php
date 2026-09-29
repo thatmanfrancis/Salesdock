@@ -24,6 +24,7 @@
 @section('content')
     <div class="page">
         <div class="page-tools">
+            <a class="tool" href="{{ route('analytics.pdf', request()->query()) }}" target="_blank" rel="noopener">Download PDF</a>
             <x-ui.filter
                 :action="route('analytics')"
                 :period="$period"

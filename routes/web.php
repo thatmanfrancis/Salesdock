@@ -139,6 +139,7 @@ Route::middleware('auth')->group(function () {
         Route::delete('/promotions/{promotion}', [DeskController::class, 'destroyPromotion'])->name('promotions.destroy');
 
         Route::get('/financials/ledger', [OfficeController::class, 'ledger'])->name('financials');
+        Route::get('/financials/ledger/report.pdf', [OfficeController::class, 'financialsPdf'])->name('financials.pdf');
         Route::get('/financials/ledger/{ledger}', [OfficeController::class, 'showLedger'])->name('financials.show');
         Route::post('/financials/goals', [OfficeController::class, 'storeGoal'])->name('financials.goals.store');
         Route::get('/financials/tax-filings', [OfficeController::class, 'taxFilings'])->name('tax-filings');
@@ -150,6 +151,7 @@ Route::middleware('auth')->group(function () {
         Route::put('/expenses/{expense}', [OfficeController::class, 'updateExpense'])->name('expenses.update');
         Route::delete('/expenses/{expense}', [OfficeController::class, 'destroyExpense'])->name('expenses.destroy');
         Route::get('/analytics', [OfficeController::class, 'analytics'])->name('analytics');
+        Route::get('/analytics/report.pdf', [OfficeController::class, 'analyticsPdf'])->name('analytics.pdf');
         Route::get('/staff', [OfficeController::class, 'staff'])->name('staff');
         Route::post('/staff', [OfficeController::class, 'storeStaff'])->name('staff.store');
         Route::get('/staff/{user}', [OfficeController::class, 'showStaff'])->name('staff.show');

@@ -16,6 +16,7 @@
 @section('content')
     <div class="page">
         <div class="page-tools">
+            <a class="tool" href="{{ route('financials.pdf', request()->query()) }}" target="_blank" rel="noopener">Download PDF</a>
             <x-ui.filter :action="route('financials')" :active="$filtered" label="Filter ledger">
                 <x-ui.select name="channel" label="Channel" :value="$channel" :options="$channels" />
                 <x-ui.select name="cashier" label="Cashier" :value="$cashierId" :options="$cashiers" />

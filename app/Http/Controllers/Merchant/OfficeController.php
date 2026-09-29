@@ -109,6 +109,80 @@ class OfficeController extends MerchantController
         ]);
     }
 
+    public function financialsPdf(Request $request)
+    {
+        abort_unless($this->managesFinancials(), 403);
+
+        $tenantId = $this->tenantId();
+        $channels = [
+            '' => 'All',
+            'POS' => 'POS',
+            'ONLINE' => 'Online',
+            'WHATSAPP' => 'WhatsApp',
+            'INSTAGRAM' => 'Instagram',
+            'LINK' => 'Link',
+        ];
+        $channel = (string) $request->query('channel', '');
+        if (! array_key_exists($channel, $channels)) {
+            $channel = '';
+        }
+        $staff = User::query()->where('tenantId', $tenantId)->orderBy('name')->pluck('name', 'id');
+        $cashierId = (string) $request->query('cashier', '');
+        if ($cashierId !== '' && ! $staff->has($cashierId)) {
+            $cashierId = '';
+        }
+        $from = $this->ledgerDay((string) $request->query('from', ''));
+        $to = $this->ledgerDay((string) $request->query('to', ''), true);
+
+        $query = SalesLedger::query()->where('tenantId', $tenantId);
+        if ($channel !== '') {
+            $query->where('channel', $channel);
+        }
+        if ($cashierId !== '') {
+            $query->where('cashierId', $cashierId);
+        }
+        if ($from) {
+            $query->where('createdAt', '>=', $from);
+        }
+        if ($to) {
+            $query->where('createdAt', '<=', $to);
+        }
+
+        $totals = (clone $query)->toBase()->selectRaw('coalesce(sum("grossRevenue"), 0) as gross_revenue, coalesce(sum("netRevenue"), 0) as net_revenue, coalesce(sum("totalVat"), 0) as total_vat, coalesce(sum("grossProfit"), 0) as gross_profit')->first();
+        $entries = $query->with('cashier')->latest('createdAt')->limit(500)->get();
+        $filters = [];
+        if ($channel !== '') {
+            $filters[] = 'Channel '.$channels[$channel];
+        }
+        if ($cashierId !== '') {
+            $filters[] = 'Cashier '.($staff[$cashierId] ?? 'Selected');
+        }
+        if ($from) {
+            $filters[] = 'From '.$from->timezone('Africa/Lagos')->format('d M Y');
+        }
+        if ($to) {
+            $filters[] = 'To '.$to->timezone('Africa/Lagos')->format('d M Y');
+        }
+
+        $range = $from || $to
+            ? trim(($from ? $from->timezone('Africa/Lagos')->format('d M Y') : 'Start').' – '.($to ? $to->timezone('Africa/Lagos')->format('d M Y') : 'Now'))
+            : 'All time';
+
+        return view('merchant.financials-report', $this->reportBrand([
+            'title' => 'Financials report',
+            'range' => $range,
+            'backUrl' => route('financials', $request->query()),
+            'summary' => [
+                ['label' => 'Gross revenue', 'value' => $this->money($totals->gross_revenue ?? 0)],
+                ['label' => 'Net revenue', 'value' => $this->money($totals->net_revenue ?? 0)],
+                ['label' => 'Total VAT', 'value' => $this->money($totals->total_vat ?? 0)],
+                ['label' => 'Gross profit', 'value' => $this->money($totals->gross_profit ?? 0)],
+            ],
+            'entries' => $entries,
+            'filters' => $filters,
+        ]));
+    }
+
     public function storeGoal(Request $request)
     {
         $data = $request->validate([
@@ -403,6 +477,40 @@ class OfficeController extends MerchantController
             'branches' => $this->analyticsBranches($tenantId, $start, $end),
             'products' => $this->analyticsProducts($tenantId, $start, $end),
         ]);
+    }
+
+    public function analyticsPdf(Request $request)
+    {
+        abort_unless($this->managesAnalytics(), 403);
+
+        $tenantId = $this->tenantId();
+        [$period, $start, $end, $prevStart, $prevEnd] = $this->analyticsWindow($request);
+        $current = $this->analyticsTotals($tenantId, $start, $end);
+        $previous = $this->analyticsTotals($tenantId, $prevStart, $prevEnd);
+        $gross = $current['gross'];
+
+        return view('merchant.analytics-report', $this->reportBrand([
+            'title' => 'Analytics report',
+            'range' => $start->copy()->timezone('Africa/Lagos')->format('d M Y').' – '.$end->copy()->timezone('Africa/Lagos')->format('d M Y'),
+            'backUrl' => route('analytics', $request->query()),
+            'kpis' => [
+                'gross' => $gross,
+                'cogs' => $current['cogs'],
+                'vat' => $current['vat'],
+                'profit' => $current['profit'],
+                'net' => $current['net'],
+                'orders' => $current['orders'],
+                'aov' => $current['orders'] > 0 ? $gross / $current['orders'] : 0,
+                'margin' => $gross > 0 ? round(($current['profit'] / $gross) * 100, 1) : 0,
+                'revenueGrowth' => $this->growth($gross, $previous['gross']),
+                'profitGrowth' => $this->growth($current['profit'], $previous['profit']),
+            ],
+            'channels' => $this->analyticsChannels($tenantId, $start, $end),
+            'dayparts' => $this->analyticsDayparts($tenantId, $start, $end),
+            'branches' => $this->analyticsBranches($tenantId, $start, $end),
+            'products' => $this->analyticsProducts($tenantId, $start, $end),
+            'period' => $period,
+        ]));
     }
 
     public function staff(Request $request)
@@ -2027,6 +2135,28 @@ class OfficeController extends MerchantController
         }
 
         return ! empty(Permissions::normalize($user->role?->permissions ?? [])['canViewAnalytics']);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function reportBrand(array $data): array
+    {
+        $tenant = Tenant::query()->findOrFail($this->tenantId());
+        $actor = $this->user();
+        $owner = User::query()
+            ->where('tenantId', $tenant->id)
+            ->whereHas('role', fn ($query) => $query->where('name', 'Owner'))
+            ->orderBy('createdAt')
+            ->first();
+
+        return array_merge($data, [
+            'businessName' => $tenant->name,
+            'ownerName' => $owner?->name ?: $actor->name,
+            'preparedBy' => $actor->name,
+            'generatedAt' => now('Africa/Lagos')->format('d M Y · h:i A').' WAT',
+        ]);
     }
 
     private function analyticsWindow(Request $request): array

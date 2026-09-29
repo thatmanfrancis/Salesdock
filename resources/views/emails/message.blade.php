@@ -8,7 +8,7 @@
                 <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:24px;border:1px solid #e5e7eb;">
                     <tr>
                         <td style="padding:32px 40px 8px;text-align:center;">
-                            <img src="cid:salesdock-logo" alt="SalesDock" width="200" style="display:block;margin:0 auto 20px;max-width:200px;height:auto;border:0;">
+                            <img src="cid:salesdock-logo" alt="SalesDock" width="200" style="display:block;margin:0 auto 20px;max-width:200px;height:auto;border:0;outline:none;text-decoration:none;">
                             <h1 style="margin:0 0 4px;font-size:24px;font-weight:800;color:#111827;letter-spacing:-0.02em;">{{ $heading }}</h1>
                             @if (!empty($kicker))
                                 <p style="margin:0;font-size:14px;color:#6b7280;">{{ $kicker }}</p>
