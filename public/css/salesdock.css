@@ -389,7 +389,9 @@ a { color: var(--green); }
 .app .page {
   display: grid;
   gap: 1.25rem;
+  width: 100%;
   max-width: 80rem;
+  min-width: 0;
   margin: 0 auto;
 }
 
@@ -438,9 +440,33 @@ a { color: var(--green); }
 
 .app .crumbs .sep { color: #d1d5db; }
 
-.app .page-tools { display: flex; justify-content: flex-end; align-items: center; gap: 0.5rem; }
+.app .page-tools {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+}
 
 .app .page-tools > button { border-radius: 4px; }
+
+.app .pdf-export {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+  margin-right: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.app .pdf-export-hint {
+  color: #6b7280;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
 
 .app .ui-modal {
   position: fixed;
@@ -1663,7 +1689,15 @@ a { color: var(--green); }
   text-align: center;
 }
 
-.app .day-chart { display: flex; align-items: flex-end; gap: 0.35rem; height: 9rem; }
+.app .day-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.35rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  height: 9rem;
+}
 
 .app .day-chart div { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; min-width: 0; }
 
@@ -1671,7 +1705,11 @@ a { color: var(--green); }
 
 .app .day-chart span { margin-top: 0.35rem; color: #9ca3af; font-size: 0.65rem; white-space: nowrap; }
 
-.app .day-chart.wide { overflow-x: auto; }
+.app .day-chart.wide {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
 
 .app .day-chart.wide div { flex: 0 0 1.75rem; }
 
@@ -1749,6 +1787,8 @@ a { color: var(--green); }
 
 .app .stats article,
 .app .card {
+  min-width: 0;
+  max-width: 100%;
   padding: 1rem;
   background: #fff;
   border: 1px solid #e5e7eb;
@@ -3217,6 +3257,23 @@ a { color: var(--green); }
   margin-right: auto;
   font-size: 1.05rem;
 }
+
+.sf-summary-fees {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #e5e7eb;
+}
+.sf-summary-fees p {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0;
+  font-size: 0.875rem;
+  color: #6b7280;
+}
+.sf-summary-fees p:last-child { color: #374151; }
 
 .sf-checkout {
   display: grid;

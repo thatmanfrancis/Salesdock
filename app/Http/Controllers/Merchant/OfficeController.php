@@ -172,6 +172,15 @@ class OfficeController extends MerchantController
             'title' => 'Financials report',
             'range' => $range,
             'backUrl' => route('financials', $request->query()),
+            'fingerprint' => implode('|', [
+                'financials',
+                $range,
+                (string) ($totals->gross_revenue ?? 0),
+                (string) ($totals->net_revenue ?? 0),
+                (string) ($totals->total_vat ?? 0),
+                (string) ($totals->gross_profit ?? 0),
+                (string) $entries->count(),
+            ]),
             'summary' => [
                 ['label' => 'Gross revenue', 'value' => $this->money($totals->gross_revenue ?? 0)],
                 ['label' => 'Net revenue', 'value' => $this->money($totals->net_revenue ?? 0)],
@@ -493,6 +502,15 @@ class OfficeController extends MerchantController
             'title' => 'Analytics report',
             'range' => $start->copy()->timezone('Africa/Lagos')->format('d M Y').' – '.$end->copy()->timezone('Africa/Lagos')->format('d M Y'),
             'backUrl' => route('analytics', $request->query()),
+            'fingerprint' => implode('|', [
+                'analytics',
+                $period,
+                $start->toIso8601String(),
+                $end->toIso8601String(),
+                (string) $gross,
+                (string) $current['profit'],
+                (string) $current['orders'],
+            ]),
             'kpis' => [
                 'gross' => $gross,
                 'cogs' => $current['cogs'],
@@ -2151,11 +2169,22 @@ class OfficeController extends MerchantController
             ->orderBy('createdAt')
             ->first();
 
+        $fingerprint = (string) ($data['fingerprint'] ?? (($data['title'] ?? 'report').'|'.($data['range'] ?? '')));
+        unset($data['fingerprint']);
+
+        $hash = strtoupper(substr(hash('sha256', $tenant->id.'|'.$fingerprint.'|'.config('app.key')), 0, 16));
+
         return array_merge($data, [
             'businessName' => $tenant->name,
             'ownerName' => $owner?->name ?: $actor->name,
             'preparedBy' => $actor->name,
             'generatedAt' => now('Africa/Lagos')->format('d M Y · h:i A').' WAT',
+            'businessAddress' => $tenant->address,
+            'businessPhone' => $tenant->phone,
+            'businessEmail' => $tenant->email,
+            'businessTin' => $tenant->tin,
+            'businessRc' => $tenant->rcNumber,
+            'docHash' => 'DOC-'.$hash,
         ]);
     }
 

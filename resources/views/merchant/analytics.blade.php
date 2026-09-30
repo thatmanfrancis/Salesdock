@@ -24,7 +24,18 @@
 @section('content')
     <div class="page">
         <div class="page-tools">
-            <a class="tool" href="{{ route('analytics.pdf', request()->query()) }}" target="_blank" rel="noopener">Download PDF</a>
+            <div class="pdf-export">
+                <a
+                    class="tool"
+                    href="{{ route('analytics.pdf', request()->query()) }}"
+                    target="_blank"
+                    rel="noopener"
+                    title="Exports the analytics currently shown on this page"
+                >Download PDF (current filters)</a>
+                @if ($filtered)
+                    <span class="pdf-export-hint">Range: {{ $range }}</span>
+                @endif
+            </div>
             <x-ui.filter
                 :action="route('analytics')"
                 :period="$period"

@@ -45,5 +45,31 @@
                 @endforeach
             </tbody>
         </table>
+
+        @php
+            $itemsTotal  = $items->sum('lineTotal');
+            $orderMethod = strtoupper((string) ($order->method ?? ''));
+            // Service charge is only on card payments
+            $serviceFee  = ($orderMethod === 'CARD') ? round($itemsTotal * 0.015, 2) : 0;
+        @endphp
+
+        <div class="sf-summary-fees" style="margin-top:0.75rem">
+            <p><span>Subtotal</span><span>₦{{ number_format($itemsTotal, 2) }}</span></p>
+            @if ($serviceFee > 0)
+                <p>
+                    <span>Service charge (1.5%)</span>
+                    <span>₦{{ number_format($serviceFee, 2) }}</span>
+                </p>
+            @endif
+            @if ((float)$order->taxAmount > 0)
+                <p>
+                    <span>VAT</span>
+                    <span>₦{{ number_format($order->taxAmount, 2) }}</span>
+                </p>
+            @endif
+        </div>
+        <p class="sf-cart-total">
+            Total <strong>₦{{ number_format($order->netAmount, 2) }}</strong>
+        </p>
     </section>
 @endsection

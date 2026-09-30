@@ -3,43 +3,79 @@
 <head>
     <meta charset="utf-8">
     <title>Payslip {{ $payroll->period }} | SalesDock</title>
+    <link rel="icon" href="{{ asset('SalesDock.svg') }}" type="image/svg+xml">
     <style>
-        body { margin: 0; color: #111827; font: 14px/1.5 "Space Grotesk", sans-serif; }
-        main { max-width: 420px; margin: 2.5rem auto; padding: 1.5rem; }
-        h1 { margin: 0; text-align: center; font-size: 1.4rem; }
-        .sub { margin: 0.25rem 0 1.25rem; color: #6b7280; text-align: center; font-size: 0.85rem; }
-        .row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.5rem 0; border-bottom: 1px solid #f3f4f6; }
-        .row.total { margin-top: 0.35rem; border-top: 2px solid #111827; border-bottom: 0; font-weight: 700; font-size: 1.05rem; }
+        * { box-sizing: border-box; }
+        body { margin: 0; color: #111827; font: 13px/1.5 'Segoe UI', Arial, sans-serif; background: #fff; }
+        main { max-width: 480px; margin: 2rem auto; padding: 2rem; border: 1px solid #e5e7eb; border-radius: 0.75rem; }
+
+        .doc-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-bottom: 1rem; border-bottom: 2px solid #16a34a; margin-bottom: 1.25rem; }
+        .doc-brand { display: flex; align-items: center; gap: 0.5rem; }
+        .doc-brand img { height: 1.75rem; }
+        .doc-brand strong { font-size: 0.9rem; color: #16a34a; }
+        .doc-title { text-align: right; }
+        .doc-title h1 { margin: 0; font-size: 1.2rem; }
+        .doc-title p { margin: 0; color: #6b7280; font-size: 0.75rem; }
+
+        .row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.5rem 0; border-bottom: 1px solid #f3f4f6; font-size: 0.85rem; }
+        .row:last-of-type { border-bottom: 0; }
+        .row.total { margin-top: 0.5rem; padding-top: 0.75rem; border-top: 2px solid #111827; border-bottom: 0; font-weight: 700; font-size: 1rem; }
         .gain { color: #15803d; }
         .spend { color: #dc2626; }
-        .note { margin-top: 1rem; color: #6b7280; font-size: 0.8rem; }
-        button { margin-top: 1.25rem; padding: 0.5rem 0.8rem; color: #fff; background: #16a34a; border: 0; border-radius: 0.4rem; }
-        @media print { button { display: none; } main { margin: 0; padding: 0; } }
+
+        .doc-footer { margin-top: 1.25rem; padding-top: 0.75rem; border-top: 1px solid #e5e7eb; }
+        .doc-footer p { margin: 0.1rem 0; color: #9ca3af; font-size: 0.7rem; }
+        .doc-footer code { font-size: 0.65rem; word-break: break-all; color: #d1d5db; }
+
+        button { margin-top: 1.25rem; padding: 0.55rem 1rem; color: #fff; background: #16a34a; border: 0; border-radius: 0.4rem; font-size: 0.875rem; cursor: pointer; }
+        @media print { button { display: none; } main { margin: 0; border: 0; border-radius: 0; } }
     </style>
 </head>
 <body>
-    @php
-        $money = fn ($amount) => '₦'.number_format((float) $amount, 2);
-        try {
-            $month = \Illuminate\Support\Carbon::createFromFormat('!Y-m', (string) $payroll->period)->format('M Y');
-        } catch (\Throwable) {
-            $month = $payroll->period;
-        }
-    @endphp
-    <main>
-        <h1>Payslip</h1>
-        <p class="sub">{{ $tenant->name ?? 'Shop' }} · {{ $month }}</p>
-        <div class="row"><span>Staff</span><strong>{{ $payroll->user?->name ?: '—' }}</strong></div>
-        <div class="row"><span>Role</span><span>{{ $payroll->user?->role?->name ?: '—' }}</span></div>
-        <div class="row"><span>Base salary</span><span>{{ $money($payroll->baseSalary) }}</span></div>
-        <div class="row"><span class="gain">Bonus</span><span class="gain">+ {{ $money($payroll->bonus) }}</span></div>
-        <div class="row"><span class="spend">Deductions</span><span class="spend">− {{ $money($payroll->deductions) }}</span></div>
-        <div class="row total"><span>Net pay</span><span class="gain">{{ $money($payroll->netPay) }}</span></div>
-        @if ($payroll->notes)
-            <p class="note">Notes: {{ $payroll->notes }}</p>
-        @endif
-        <p class="note">{{ $payroll->isPaid ? 'Paid' : 'Pending' }} · Processed {{ $payroll->createdAt?->timezone('Africa/Lagos')->format('d M Y') }}</p>
-        <button type="button" onclick="window.print()">Print</button>
-    </main>
+@php
+    $money = fn ($amount) => '₦'.number_format((float) $amount, 2);
+    try {
+        $month = \Illuminate\Support\Carbon::createFromFormat('!Y-m', (string) $payroll->period)->format('F Y');
+    } catch (\Throwable) {
+        $month = $payroll->period;
+    }
+    $genAt = now()->timezone('Africa/Lagos')->format('d M Y, H:i:s T');
+    $hash  = strtoupper(substr(hash('sha256', $payroll->id . $payroll->netPay . $payroll->period . config('app.key')), 0, 16));
+@endphp
+<main>
+    <div class="doc-header">
+        <div class="doc-brand">
+            <img src="{{ asset('SalesDock.svg') }}" alt="SalesDock">
+            <strong>SalesDock</strong>
+        </div>
+        <div class="doc-title">
+            <h1>Payslip</h1>
+            <p>{{ $tenant->name ?? 'Shop' }} &nbsp;·&nbsp; {{ $month }}</p>
+        </div>
+    </div>
+
+    <div class="row"><span>Staff</span><strong>{{ $payroll->user?->name ?: '—' }}</strong></div>
+    <div class="row"><span>Role</span><span>{{ $payroll->user?->role?->name ?: '—' }}</span></div>
+    <div class="row"><span>Period</span><span>{{ $month }}</span></div>
+    <div class="row"><span>Base salary</span><span>{{ $money($payroll->baseSalary) }}</span></div>
+    <div class="row gain"><span>Bonus</span><span>+ {{ $money($payroll->bonus) }}</span></div>
+    <div class="row spend"><span>Deductions</span><span>− {{ $money($payroll->deductions) }}</span></div>
+    <div class="row total"><span>Net pay</span><span class="gain">{{ $money($payroll->netPay) }}</span></div>
+
+    @if ($payroll->notes)
+        <p style="margin:0.75rem 0 0;color:#6b7280;font-size:0.8rem">Notes: {{ $payroll->notes }}</p>
+    @endif
+
+    <div class="doc-footer">
+        <p>Status: <strong>{{ $payroll->isPaid ? 'Paid' : 'Pending' }}</strong>
+            @if ($payroll->paidAt) &nbsp;·&nbsp; Paid {{ $payroll->paidAt->timezone('Africa/Lagos')->format('d M Y') }} @endif
+        </p>
+        <p>Processed {{ $payroll->createdAt?->timezone('Africa/Lagos')->format('d M Y') }} &nbsp;·&nbsp; Generated {{ $genAt }}</p>
+        <p>This payslip was generated by SalesDock. &nbsp;ID: {{ $payroll->id }}</p>
+        <code>DOC-{{ $hash }}</code>
+    </div>
+
+    <button type="button" onclick="window.print()">Print / Save as PDF</button>
+</main>
 </body>
 </html>

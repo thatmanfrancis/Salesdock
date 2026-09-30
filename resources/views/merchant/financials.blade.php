@@ -16,7 +16,18 @@
 @section('content')
     <div class="page">
         <div class="page-tools">
-            <a class="tool" href="{{ route('financials.pdf', request()->query()) }}" target="_blank" rel="noopener">Download PDF</a>
+            <div class="pdf-export">
+                <a
+                    class="tool"
+                    href="{{ route('financials.pdf', request()->query()) }}"
+                    target="_blank"
+                    rel="noopener"
+                    title="Exports the ledger currently shown on this page"
+                >Download PDF (current filters)</a>
+                @if ($filtered)
+                    <span class="pdf-export-hint">Uses the filters applied above</span>
+                @endif
+            </div>
             <x-ui.filter :action="route('financials')" :active="$filtered" label="Filter ledger">
                 <x-ui.select name="channel" label="Channel" :value="$channel" :options="$channels" />
                 <x-ui.select name="cashier" label="Cashier" :value="$cashierId" :options="$cashiers" />
