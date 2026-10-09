@@ -97,10 +97,10 @@ class Nav
     {
         $prefixes = [
             'CLIENT' => ['/account', '/profile'],
-            'CASHIER'    => ['/dashboard', '/pos', '/products', '/orders', '/notifications', '/support', '/profile', '/billing'],
+            'CASHIER' => ['/dashboard', '/pos', '/products', '/orders', '/notifications', '/support', '/profile', '/billing'],
             'SUPERVISOR' => ['/pos', '/dashboard', '/orders', '/products', '/customers', '/refunds', '/inventory', '/suppliers', '/promotions', '/staff', '/payroll', '/activity-logs', '/notifications', '/support', '/profile', '/billing'],
-            'MANAGER'    => ['/dashboard', '/orders', '/products', '/customers', '/inventory', '/suppliers', '/promotions', '/refunds', '/analytics', '/staff', '/branches', '/payroll', '/roles', '/settings', '/audit-logs', '/activity-logs', '/financials', '/expenses', '/notifications', '/support', '/profile', '/billing'],
-            'ADMIN'      => ['/pos', '/dashboard', '/orders', '/products', '/customers', '/inventory', '/suppliers', '/promotions', '/refunds', '/analytics', '/staff', '/payroll', '/branches', '/roles', '/settings', '/audit-logs', '/activity-logs', '/financials', '/expenses', '/notifications', '/support', '/profile', '/billing', '/admin/registrations'],
+            'MANAGER' => ['/dashboard', '/orders', '/products', '/customers', '/inventory', '/suppliers', '/promotions', '/refunds', '/analytics', '/staff', '/branches', '/payroll', '/roles', '/settings', '/audit-logs', '/activity-logs', '/financials', '/expenses', '/notifications', '/support', '/profile', '/billing'],
+            'ADMIN' => ['/pos', '/dashboard', '/orders', '/products', '/customers', '/inventory', '/suppliers', '/promotions', '/refunds', '/analytics', '/staff', '/payroll', '/branches', '/roles', '/settings', '/audit-logs', '/activity-logs', '/financials', '/expenses', '/notifications', '/support', '/profile', '/billing', '/admin/registrations'],
             'SUPER_ADMIN' => ['/admin', '/profile', '/notifications', '/dashboard', '/analytics', '/billing'],
         ][$role] ?? [];
 
@@ -175,6 +175,8 @@ class Nav
             ['/admin/activity-logs', 'Activity Logs'],
             ['/admin/webhooks', 'Webhooks'],
             ['/admin/support', 'Support'],
+            ['/admin/check-ins', 'Check-ins'],
+            ['/admin/settings', 'Settings'],
             ['/profile', 'Profile'],
         ];
     }

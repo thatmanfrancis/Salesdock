@@ -38,7 +38,7 @@
                 <tbody>
                     @forelse ($orders as $order)
                         <tr>
-                            <td><a class="ref" href="{{ route('inventory.orders.show', $order) }}">{{ strtoupper(substr($order->id, -8)) }}</a></td>
+                            <td><a class="ref" href="{{ route('inventory.orders.show', $order) }}">{{ strtoupper(substr($order->id, -8)) }}</a>@if ($order->isAutomatic) <span class="badge pending" title="Drafted automatically when stock ran low">Auto</span>@endif</td>
                             <td>{{ $names[$order->supplierId] ?? '—' }}</td>
                             <td><span class="badge {{ strtolower($order->urgency) }}">{{ $urgencies[$order->urgency] ?? $order->urgency }}</span></td>
                             <td class="num">₦{{ number_format((float) $order->totalCost, 2) }}</td>

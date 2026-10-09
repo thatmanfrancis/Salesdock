@@ -3,7 +3,6 @@
 @section('title', 'Checkout | '.$config->storeName)
 
 @php
-    $serviceRate   = 0.015; // 1.5% Flutterwave charge on card payments
     $serviceFee    = round($subtotal * $serviceRate, 2);
     $cardTotal     = $subtotal + $serviceFee;
     $method        = old('method', 'CARD');

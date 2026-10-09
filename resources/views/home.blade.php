@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
     <title>POS &amp; Inventory Software for Nigerian Retailers | SalesDock</title>
     <meta name="description" content="POS, inventory, and online store software for Nigerian retailers. Works offline, logs every sale, and is priced in Naira. Start a 30-day free trial.">
     <!-- Open Graph -->
@@ -429,8 +429,7 @@
             @php
                 $features = is_array($plan->features) ? $plan->features : (json_decode($plan->features, true) ?? []);
                 $isPopular = $i === 1;
-                $isFree    = (float) $plan->monthlyPrice <= 0;
-                $isCustom  = str_contains(strtolower((string) $plan->name), 'enterprise') || (float) $plan->monthlyPrice === 0.0 && $i > 0;
+                $isCustom  = str_contains(strtolower((string) $plan->name), 'enterprise');
             @endphp
             <div class="pricing-card {{ $isPopular ? 'popular' : '' }} reveal" style="transition-delay:{{ $i * 0.1 }}s">
                 @if ($isPopular)
@@ -439,9 +438,7 @@
                 <div class="pricing-tier">{{ $plan->tier }}</div>
                 <h3>{{ $plan->name }}</h3>
                 <div class="pricing-price">
-                    @if ($isFree)
-                        Free <span>forever</span>
-                    @elseif ($isCustom || (float)$plan->monthlyPrice >= 999999)
+                    @if ($isCustom || (float)$plan->monthlyPrice >= 999999)
                         <span style="font-size:1.5rem;font-weight:800">Let's Talk</span>
                     @else
                         ₦{{ number_format((float) $plan->monthlyPrice, 0) }} <span>/ month</span>
@@ -595,6 +592,9 @@
                 <a href="#faq">FAQs</a>
                 <a href="{{ route('login') }}">Log In</a>
                 <a href="{{ route('register') }}">Register</a>
+                <a href="{{ route('help') }}">Help &amp; Contact</a>
+                <a href="{{ route('privacy') }}">Privacy</a>
+                <a href="{{ route('terms') }}">Terms</a>
             </div>
         </div>
         <div class="footer-copy">

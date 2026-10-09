@@ -18,6 +18,8 @@ use Illuminate\View\View;
 
 class StorefrontController extends Controller
 {
+    public const SERVICE_RATE = 0.015;
+
     public function __construct(private StoreCart $cart) {}
 
     public function show(Request $request, string $slug): View
@@ -195,6 +197,7 @@ class StorefrontController extends Controller
         return $this->storeView('store.checkout', $tenant, $config, [
             'lines' => $this->cart->lines($tenant->id),
             'subtotal' => $this->cart->subtotal($tenant->id),
+            'serviceRate' => self::SERVICE_RATE,
         ]);
     }
 
@@ -222,6 +225,7 @@ class StorefrontController extends Controller
             'customerEmail' => $data['customerEmail'],
             'customerPhone' => $data['customerPhone'],
             'customerAddress' => $data['customerAddress'] ?? null,
+            'serviceRate' => $data['method'] === 'CARD' ? self::SERVICE_RATE : 0,
             'complete' => false,
         ]);
 

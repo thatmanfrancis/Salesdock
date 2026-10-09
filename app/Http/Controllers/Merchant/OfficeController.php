@@ -8,6 +8,7 @@ use App\Models\BillingInvoice;
 use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\Expense;
+use App\Models\ExpenseItem;
 use App\Models\FinancialGoal;
 use App\Models\Notification;
 use App\Models\Order;
@@ -18,11 +19,11 @@ use App\Models\SalesLedger;
 use App\Models\StaffPayroll;
 use App\Models\StorefrontConfig;
 use App\Models\Subscription;
+use App\Models\Supplier;
 use App\Models\TaxFiling;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Models\VatSettings;
-use App\Services\BillingService;
 use App\Services\Flutterwave;
 use App\Services\TaxReturns;
 use App\Support\Approval;
@@ -32,15 +33,24 @@ use App\Support\Password;
 use App\Support\Permissions;
 use App\Support\PlanFeatures;
 use App\Support\Totp;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 
 class OfficeController extends MerchantController
 {
+    private const EXPENSE_METHODS = [
+        'CASH' => 'Cash',
+        'TRANSFER' => 'Bank transfer',
+        'POS' => 'POS / Card',
+        'OTHER' => 'Other',
+    ];
+
     public function ledger(Request $request)
     {
         abort_unless($this->managesFinancials(), 403);
@@ -164,6 +174,22 @@ class OfficeController extends MerchantController
             $filters[] = 'To '.$to->timezone('Africa/Lagos')->format('d M Y');
         }
 
+        $spendQuery = Expense::query()->where('tenantId', $tenantId);
+        if ($from) {
+            $spendQuery->where('date', '>=', $from);
+        }
+        if ($to) {
+            $spendQuery->where('date', '<=', $to);
+        }
+        $spent = (float) (clone $spendQuery)->sum('amount');
+        $spendByCategory = (clone $spendQuery)->toBase()
+            ->selectRaw('category, coalesce(sum(amount), 0) as total')
+            ->groupBy('category')
+            ->orderByDesc('total')
+            ->get();
+        $expenses = $spendQuery->with('items')->orderByDesc('date')->limit(500)->get();
+        $netProfit = (float) ($totals->gross_profit ?? 0) - $spent;
+
         $range = $from || $to
             ? trim(($from ? $from->timezone('Africa/Lagos')->format('d M Y') : 'Start').' – '.($to ? $to->timezone('Africa/Lagos')->format('d M Y') : 'Now'))
             : 'All time';
@@ -180,15 +206,23 @@ class OfficeController extends MerchantController
                 (string) ($totals->total_vat ?? 0),
                 (string) ($totals->gross_profit ?? 0),
                 (string) $entries->count(),
+                (string) $spent,
+                (string) $expenses->count(),
             ]),
             'summary' => [
                 ['label' => 'Gross revenue', 'value' => $this->money($totals->gross_revenue ?? 0)],
                 ['label' => 'Net revenue', 'value' => $this->money($totals->net_revenue ?? 0)],
                 ['label' => 'Total VAT', 'value' => $this->money($totals->total_vat ?? 0)],
                 ['label' => 'Gross profit', 'value' => $this->money($totals->gross_profit ?? 0)],
+                ['label' => 'Operating expenses', 'value' => $this->money($spent)],
+                ['label' => 'Net profit', 'value' => ($netProfit < 0 ? '−' : '').$this->money(abs($netProfit))],
             ],
             'entries' => $entries,
             'filters' => $filters,
+            'expenses' => $expenses,
+            'spendByCategory' => $spendByCategory,
+            'expenseLabels' => $this->expenseCategories(),
+            'expenseMethods' => self::EXPENSE_METHODS,
         ]));
     }
 
@@ -344,32 +378,41 @@ class OfficeController extends MerchantController
 
         $tenantId = $this->tenantId();
         $categories = $this->expenseCategories();
-        $today = now('Africa/Lagos')->startOfDay();
-        $monthStart = $today->copy()->startOfMonth();
-        $category = (string) $request->query('category', '');
-        if (! array_key_exists($category, $categories)) {
-            $category = '';
-        }
-        $from = $this->expenseDay((string) $request->query('from', '')) ?? $monthStart->copy();
-        $to = $this->expenseDay((string) $request->query('to', ''), true) ?? $today->copy()->endOfDay();
-        if ($from->gt($to)) {
-            $from = $monthStart->copy();
-            $to = $today->copy()->endOfDay();
-        }
-        $fromDay = $from->copy()->timezone('Africa/Lagos')->toDateString();
-        $toDay = $to->copy()->timezone('Africa/Lagos')->toDateString();
-        $from = $from->copy()->utc();
-        $to = $to->copy()->utc();
-        $defaultFrom = $monthStart->toDateString();
-        $defaultTo = $today->toDateString();
+        [
+            'range' => $range,
+            'query' => $query,
+            'from' => $from,
+            'to' => $to,
+            'fromDay' => $fromDay,
+            'toDay' => $toDay,
+            'category' => $category,
+            'search' => $search,
+            'filtered' => $filtered,
+            'today' => $defaultTo,
+        ] = $this->expenseFilters($request);
 
-        $range = Expense::query()->where('tenantId', $tenantId)->whereBetween('date', [$from, $to]);
         $spent = (clone $range)->toBase()->selectRaw('coalesce(sum(amount), 0) as total')->value('total');
         $pills = (clone $range)->toBase()
             ->selectRaw('category, coalesce(sum(amount), 0) as total')
             ->groupBy('category')
             ->orderByDesc('total')
             ->get();
+        $topItems = ExpenseItem::query()
+            ->whereIn('expenseId', (clone $range)->select('id'))
+            ->toBase()
+            ->selectRaw('min(name) as name, coalesce(sum(amount), 0) as total, count(*) as times')
+            ->groupByRaw('lower(name)')
+            ->orderByDesc('total')
+            ->limit(8)
+            ->get();
+        $suggestions = ExpenseItem::query()
+            ->where('tenantId', $tenantId)
+            ->toBase()
+            ->selectRaw('min(name) as name, count(*) as uses')
+            ->groupByRaw('lower(name)')
+            ->orderByDesc('uses')
+            ->limit(200)
+            ->pluck('name');
         $books = SalesLedger::query()
             ->where('tenantId', $tenantId)
             ->whereBetween('createdAt', [$from, $to])
@@ -382,10 +425,6 @@ class OfficeController extends MerchantController
         $operating = (float) $spent;
         $net = $profit - $operating;
 
-        $query = clone $range;
-        if ($category !== '') {
-            $query->where('category', $category);
-        }
         $totalAmount = (clone $query)->toBase()->selectRaw('coalesce(sum(amount), 0) as total')->value('total');
         $perPage = 20;
         $total = (clone $query)->count();
@@ -393,18 +432,22 @@ class OfficeController extends MerchantController
         $page = min($pages, max(1, (int) $request->query('page', 1)));
 
         return view('merchant.expenses', [
-            'expenses' => $query->orderByDesc('date')->orderByDesc('createdAt')->forPage($page, $perPage)->get(),
+            'expenses' => $query->with('items')->orderByDesc('date')->orderByDesc('createdAt')->forPage($page, $perPage)->get(),
             'categories' => ['' => 'All'] + $categories,
             'labels' => $categories,
+            'methods' => self::EXPENSE_METHODS,
             'category' => $category,
+            'search' => $search,
             'from' => $fromDay,
             'to' => $toDay,
             'today' => $defaultTo,
             'page' => $page,
             'pages' => $pages,
-            'filtered' => $category !== '' || $fromDay !== $defaultFrom || $toDay !== $defaultTo,
+            'filtered' => $filtered,
             'totalAmount' => (float) $totalAmount,
             'pills' => $pills,
+            'topItems' => $topItems,
+            'suggestions' => $suggestions,
             'pnl' => [
                 'gross' => $gross,
                 'cogs' => $cogs,
@@ -420,10 +463,11 @@ class OfficeController extends MerchantController
     public function storeExpense(Request $request)
     {
         abort_unless($this->managesFinancials(), 403);
-        Expense::query()->create($this->expenseData($request) + [
+        $expense = new Expense([
             'tenantId' => $this->tenantId(),
             'createdBy' => $this->user()->id,
         ]);
+        $this->saveExpense($request, $expense);
 
         return back()->with('status', 'Expense logged.');
     }
@@ -431,7 +475,7 @@ class OfficeController extends MerchantController
     public function updateExpense(Request $request, Expense $expense)
     {
         $expense = $this->guardExpense($expense);
-        $expense->forceFill($this->expenseData($request))->save();
+        $this->saveExpense($request, $expense);
 
         return back()->with('status', 'Expense saved.');
     }
@@ -442,6 +486,42 @@ class OfficeController extends MerchantController
         $expense->delete();
 
         return back()->with('status', 'Expense deleted.');
+    }
+
+    public function exportExpenses(Request $request)
+    {
+        abort_unless($this->managesFinancials(), 403);
+
+        ['query' => $query, 'fromDay' => $fromDay, 'toDay' => $toDay] = $this->expenseFilters($request);
+        $labels = $this->expenseCategories();
+        $expenses = $query->with('items')->orderBy('date')->orderBy('createdAt')->get();
+
+        return response()->streamDownload(function () use ($expenses, $labels) {
+            $out = fopen('php://output', 'w');
+            $write = fn (array $row) => fputcsv($out, array_map(
+                fn ($cell) => is_string($cell) && preg_match('/^[=+\-@]/', $cell) ? "'".$cell : $cell,
+                $row
+            ), escape: '');
+            fwrite($out, "\xEF\xBB\xBF");
+            $write(['Date', 'Title', 'Category', 'Payment', 'Item', 'Quantity', 'Unit', 'Item amount', 'Expense total', 'Notes']);
+            foreach ($expenses as $expense) {
+                $base = [
+                    $expense->date?->timezone('Africa/Lagos')->format('Y-m-d'),
+                    $expense->title,
+                    $labels[$expense->category] ?? $expense->category,
+                    self::EXPENSE_METHODS[$expense->paymentMethod ?? ''] ?? '',
+                ];
+                if ($expense->items->isEmpty()) {
+                    $write([...$base, '', '', '', '', $expense->amount, $expense->notes]);
+
+                    continue;
+                }
+                foreach ($expense->items as $item) {
+                    $write([...$base, $item->name, $item->quantity, $item->unit, $item->amount, $expense->amount, $expense->notes]);
+                }
+            }
+            fclose($out);
+        }, 'expenses-'.$fromDay.'-to-'.$toDay.'.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
 
     public function analytics(Request $request)
@@ -1061,14 +1141,18 @@ class OfficeController extends MerchantController
         $store = StorefrontConfig::query()->firstOrNew(['tenantId' => $tenant->id]);
         $subscription = Subscription::query()->with('plan')->where('tenantId', $tenant->id)->first();
         $opensStorefront = PlanFeatures::includes(
-            is_array($subscription?->plan?->features) ? $subscription->plan->features : [],
+            $subscription?->features() ?? [],
             ['Storefront / Online Store', 'White-label Storefront']
         );
+        $managesSuppliers = PlanFeatures::includes($subscription?->features() ?? [], ['Supplier Management']);
         $section = (string) $request->query('section', 'business');
         if ($section === 'storefront' && ! $opensStorefront) {
             return redirect()->route('not-eligible');
         }
-        if (! in_array($section, ['business', 'vat', 'storefront', 'subscription'], true)) {
+        if ($section === 'restock' && ! $managesSuppliers) {
+            return redirect()->route('not-eligible');
+        }
+        if (! in_array($section, ['business', 'vat', 'storefront', 'restock', 'subscription'], true)) {
             $section = 'business';
         }
         $days = null;
@@ -1085,6 +1169,13 @@ class OfficeController extends MerchantController
             'subscription' => $subscription,
             'days' => $days,
             'opensStorefront' => $opensStorefront,
+            'managesSuppliers' => $managesSuppliers,
+            'restock' => $section === 'restock' ? [
+                'suppliersOn' => Supplier::query()->where('tenantId', $tenant->id)->where('isActive', true)->where('restockDrafts', true)->count(),
+                'suppliers' => Supplier::query()->where('tenantId', $tenant->id)->where('isActive', true)->count(),
+                'linkedProducts' => Product::query()->where('tenantId', $tenant->id)->where('isActive', true)->whereNotNull('supplierId')->count(),
+                'unlinkedProducts' => Product::query()->where('tenantId', $tenant->id)->where('isActive', true)->whereNull('supplierId')->count(),
+            ] : null,
             'storeUrl' => $tenant->slug ? route('store.show', $tenant->slug) : null,
         ]);
     }
@@ -1095,8 +1186,15 @@ class OfficeController extends MerchantController
 
         $section = (string) $request->input('section', 'business');
         if ($section === 'storefront') {
-            $features = Subscription::query()->with('plan')->where('tenantId', $this->tenantId())->first()?->plan?->features;
-            if (! PlanFeatures::includes(is_array($features) ? $features : [], ['Storefront / Online Store', 'White-label Storefront'])) {
+            $features = Subscription::query()->with('plan')->where('tenantId', $this->tenantId())->first()?->features() ?? [];
+            if (! PlanFeatures::includes($features, ['Storefront / Online Store', 'White-label Storefront'])) {
+                return redirect()->route('not-eligible');
+            }
+        }
+
+        if ($section === 'restock') {
+            $features = Subscription::query()->with('plan')->where('tenantId', $this->tenantId())->first()?->features() ?? [];
+            if (! PlanFeatures::includes($features, ['Supplier Management'])) {
                 return redirect()->route('not-eligible');
             }
         }
@@ -1104,8 +1202,19 @@ class OfficeController extends MerchantController
         return match ($section) {
             'vat' => $this->saveVat($request),
             'storefront' => $this->saveStorefront($request),
+            'restock' => $this->saveRestock($request),
             default => $this->saveBusiness($request),
         };
+    }
+
+    private function saveRestock(Request $request)
+    {
+        $on = $request->boolean('restockDrafts');
+        Tenant::query()->whereKey($this->tenantId())->update(['restockDrafts' => $on]);
+
+        return redirect()->route('settings', ['section' => 'restock'])->with('status', $on
+            ? 'Restock drafts are on. Suppliers you have switched on will get draft orders when stock runs low.'
+            : 'Restock drafts are off for the whole shop.');
     }
 
     public function roles(Request $request)
@@ -1559,7 +1668,7 @@ class OfficeController extends MerchantController
 
         return view('merchant.billing', [
             'subscription' => $subscription,
-            'plans' => Plan::query()->where('isActive', true)->orderBy('monthlyPrice')->get(),
+            'plans' => Plan::query()->purchasable()->orderBy('monthlyPrice')->get(),
             'invoices' => $invoiceQuery->forPage($page, $perPage)->get(),
             'cycles' => $cycles,
             'hints' => $hints,
@@ -1619,7 +1728,7 @@ class OfficeController extends MerchantController
         ]);
     }
 
-    public function choosePlan(Request $request, Flutterwave $flutterwave, BillingService $billing)
+    public function choosePlan(Request $request, Flutterwave $flutterwave)
     {
         abort_unless($this->changesBilling(), 403);
 
@@ -1628,17 +1737,20 @@ class OfficeController extends MerchantController
             'cycle' => ['required', 'in:MONTHLY,QUARTERLY,ANNUALLY'],
         ]);
         $tenantId = $this->tenantId();
-        $plan = Plan::query()->where('isActive', true)->whereKey($data['plan'])->first();
+        $plan = Plan::query()->purchasable()->whereKey($data['plan'])->first();
         if (! $plan) {
             return back()->withErrors(['plan' => 'Choose a plan from the list.']);
         }
         $subscription = Subscription::query()->where('tenantId', $tenantId)->first();
-        if ($subscription && $subscription->planId === $plan->id && $subscription->billingCycle === $data['cycle']) {
+        if ($subscription && $subscription->status === 'ACTIVE' && $subscription->planId === $plan->id && $subscription->billingCycle === $data['cycle']) {
             return redirect()->route('billing', ['cycle' => $data['cycle']]);
         }
 
         $amount = $this->planPrice($plan, $data['cycle']);
-        if ($amount > 0 && ! $flutterwave->ready()) {
+        if ($amount <= 0) {
+            return back()->withErrors(['plan' => $plan->name.' is not available on that billing cycle. Choose another cycle.']);
+        }
+        if (! $flutterwave->ready()) {
             return back()->withErrors(['plan' => 'Payment key missing.']);
         }
 
@@ -1661,7 +1773,7 @@ class OfficeController extends MerchantController
             'billingCycle' => $data['cycle'],
             'amount' => $amount,
             'currency' => 'NGN',
-            'gateway' => $amount > 0 ? 'FLUTTERWAVE' : null,
+            'gateway' => 'FLUTTERWAVE',
             'gatewayRef' => $plan->id,
             'periodStart' => $start,
             'periodEnd' => $end,
@@ -1675,12 +1787,6 @@ class OfficeController extends MerchantController
                 'invoiceNumber' => 'INV-'.now()->format('YmdHis').'-'.strtoupper(str()->random(5)),
                 'status' => 'PENDING',
             ]);
-        }
-
-        if ($amount <= 0) {
-            $billing->activateFree($invoice, $plan->id);
-
-            return redirect()->route('billing', ['cycle' => $data['cycle']])->with('status', 'Plan updated.');
         }
 
         return redirect()->route('billing.pay', $invoice);
@@ -1708,7 +1814,7 @@ class OfficeController extends MerchantController
         };
     }
 
-    private function periodEnd(\Illuminate\Support\Carbon $start, string $cycle): \Illuminate\Support\Carbon
+    private function periodEnd(Carbon $start, string $cycle): Carbon
     {
         return match ($cycle) {
             'QUARTERLY' => $start->copy()->addMonths(3),
@@ -1735,7 +1841,7 @@ class OfficeController extends MerchantController
     {
         $person = User::query()->where('tenantId', $tenantId)->whereKey($userId)->first();
         if (! $person) {
-            throw \Illuminate\Validation\ValidationException::withMessages([
+            throw ValidationException::withMessages([
                 'userId' => 'Choose a staff member from this shop.',
             ]);
         }
@@ -2121,7 +2227,7 @@ class OfficeController extends MerchantController
     {
         $role = Role::query()->where('tenantId', $tenantId)->whereKey($roleId)->first();
         if (! $role || $role->name === 'Owner') {
-            throw \Illuminate\Validation\ValidationException::withMessages([
+            throw ValidationException::withMessages([
                 'roleId' => 'Choose a role for this shop.',
             ]);
         }
@@ -2367,6 +2473,7 @@ class OfficeController extends MerchantController
             'MARKETING' => 'Marketing',
             'EQUIPMENT' => 'Equipment',
             'SUPPLIES' => 'Supplies',
+            'INGREDIENTS' => 'Ingredients / Stock',
             'TAXES' => 'Taxes',
             'INSURANCE' => 'Insurance',
             'PROFESSIONAL' => 'Professional',
@@ -2374,13 +2481,13 @@ class OfficeController extends MerchantController
         ];
     }
 
-    private function expenseDay(string $value, bool $end = false): ?\Illuminate\Support\Carbon
+    private function expenseDay(string $value, bool $end = false): ?Carbon
     {
         if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
             return null;
         }
 
-        $date = \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $value, 'Africa/Lagos');
+        $date = Carbon::createFromFormat('Y-m-d', $value, 'Africa/Lagos');
         if (! $date || $date->format('Y-m-d') !== $value) {
             return null;
         }
@@ -2388,25 +2495,126 @@ class OfficeController extends MerchantController
         return $end ? $date->endOfDay() : $date->startOfDay();
     }
 
-    private function expenseData(Request $request): array
+    /**
+     * Shared filters for the expenses page and its CSV export.
+     *
+     * @return array{range: Builder, query: Builder, from: Carbon, to: Carbon, fromDay: string, toDay: string, category: string, search: string, filtered: bool, today: string}
+     */
+    private function expenseFilters(Request $request): array
+    {
+        $today = now('Africa/Lagos')->startOfDay();
+        $monthStart = $today->copy()->startOfMonth();
+        $category = (string) $request->query('category', '');
+        if (! array_key_exists($category, $this->expenseCategories())) {
+            $category = '';
+        }
+        $search = mb_substr(trim((string) $request->query('q', '')), 0, 80);
+        $from = $this->expenseDay((string) $request->query('from', '')) ?? $monthStart->copy();
+        $to = $this->expenseDay((string) $request->query('to', ''), true) ?? $today->copy()->endOfDay();
+        if ($from->gt($to)) {
+            $from = $monthStart->copy();
+            $to = $today->copy()->endOfDay();
+        }
+        $fromDay = $from->copy()->timezone('Africa/Lagos')->toDateString();
+        $toDay = $to->copy()->timezone('Africa/Lagos')->toDateString();
+        $from = $from->copy()->utc();
+        $to = $to->copy()->utc();
+
+        $range = Expense::query()->where('tenantId', $this->tenantId())->whereBetween('date', [$from, $to]);
+        $query = clone $range;
+        if ($category !== '') {
+            $query->where('category', $category);
+        }
+        if ($search !== '') {
+            $like = '%'.addcslashes($search, '%_\\').'%';
+            $query->where(function ($row) use ($like) {
+                $row->where('title', 'ilike', $like)
+                    ->orWhere('notes', 'ilike', $like)
+                    ->orWhereHas('items', fn ($item) => $item->where('name', 'ilike', $like));
+            });
+        }
+
+        return [
+            'range' => $range,
+            'query' => $query,
+            'from' => $from,
+            'to' => $to,
+            'fromDay' => $fromDay,
+            'toDay' => $toDay,
+            'category' => $category,
+            'search' => $search,
+            'filtered' => $category !== '' || $search !== '' || $fromDay !== $monthStart->toDateString() || $toDay !== $today->toDateString(),
+            'today' => $today->toDateString(),
+        ];
+    }
+
+    private function saveExpense(Request $request, Expense $expense): void
     {
         $data = $request->validate([
             'title' => ['required', 'string', 'max:255'],
             'category' => ['required', 'in:'.implode(',', array_keys($this->expenseCategories()))],
-            'amount' => ['required', 'numeric', 'gt:0'],
+            'paymentMethod' => ['nullable', 'in:'.implode(',', array_keys(self::EXPENSE_METHODS))],
+            'amount' => ['nullable', 'numeric', 'gt:0', 'max:999999999999'],
             'date' => ['required', 'date_format:Y-m-d'],
             'notes' => ['nullable', 'string', 'max:2000'],
+            'items' => ['nullable', 'array', 'max:50'],
+            'items.*.name' => ['nullable', 'string', 'max:120'],
+            'items.*.quantity' => ['nullable', 'numeric', 'gt:0', 'max:9999999999'],
+            'items.*.unit' => ['nullable', 'string', 'max:30'],
+            'items.*.amount' => ['nullable', 'numeric', 'gt:0', 'max:999999999999'],
             'form' => ['nullable', 'string'],
             'expense' => ['nullable', 'string'],
         ]);
 
-        return [
-            'title' => trim($data['title']),
-            'category' => $data['category'],
-            'amount' => $data['amount'],
-            'date' => \Illuminate\Support\Carbon::parse($data['date'], 'Africa/Lagos')->startOfDay()->utc(),
-            'notes' => trim((string) ($data['notes'] ?? '')) ?: null,
-        ];
+        $items = [];
+        $errors = [];
+        foreach (array_values($data['items'] ?? []) as $index => $row) {
+            $name = trim((string) ($row['name'] ?? ''));
+            $amount = $row['amount'] ?? null;
+            if ($name === '' && ($amount === null || $amount === '')) {
+                continue;
+            }
+            if ($name === '') {
+                $errors["items.$index.name"] = 'Name every item that has an amount.';
+            }
+            if ($amount === null || $amount === '') {
+                $errors["items.$index.amount"] = 'Enter an amount for '.($name ?: 'each item').'.';
+            }
+            $unit = trim((string) ($row['unit'] ?? ''));
+            $items[] = [
+                'name' => $name,
+                'quantity' => ($row['quantity'] ?? '') !== '' ? $row['quantity'] : null,
+                'unit' => $unit !== '' ? $unit : null,
+                'amount' => (float) $amount,
+            ];
+        }
+        if ($items === [] && empty($data['amount'])) {
+            $errors['amount'] = 'Enter an amount or add at least one item.';
+        }
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
+        }
+
+        $amount = $items !== [] ? round(array_sum(array_column($items, 'amount')), 2) : (float) $data['amount'];
+
+        DB::transaction(function () use ($expense, $data, $items, $amount) {
+            $expense->forceFill([
+                'title' => trim($data['title']),
+                'category' => $data['category'],
+                'paymentMethod' => $data['paymentMethod'] ?? null,
+                'amount' => $amount,
+                'date' => Carbon::parse($data['date'], 'Africa/Lagos')->startOfDay()->utc(),
+                'notes' => trim((string) ($data['notes'] ?? '')) ?: null,
+            ])->save();
+
+            $expense->items()->delete();
+            foreach ($items as $position => $item) {
+                $expense->items()->create($item + [
+                    'tenantId' => $expense->tenantId,
+                    'position' => $position,
+                ]);
+            }
+        });
     }
 
     private function guardExpense(Expense $expense): Expense
@@ -2454,13 +2662,13 @@ class OfficeController extends MerchantController
         return $filing;
     }
 
-    private function ledgerDay(string $value, bool $end = false): ?\Illuminate\Support\Carbon
+    private function ledgerDay(string $value, bool $end = false): ?Carbon
     {
         if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
             return null;
         }
 
-        $date = \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $value);
+        $date = Carbon::createFromFormat('Y-m-d', $value);
         if (! $date || $date->format('Y-m-d') !== $value) {
             return null;
         }
@@ -2468,7 +2676,7 @@ class OfficeController extends MerchantController
         return $end ? $date->endOfDay() : $date->startOfDay();
     }
 
-    private function ledgerChart($query, ?\Illuminate\Support\Carbon $from, ?\Illuminate\Support\Carbon $to): array
+    private function ledgerChart($query, ?Carbon $from, ?Carbon $to): array
     {
         $end = ($to ?? now())->copy()->startOfDay();
         $start = ($from ?? $end->copy()->subDays(13))->copy()->startOfDay();
@@ -2485,7 +2693,7 @@ class OfficeController extends MerchantController
             ->get();
         $buckets = [];
         foreach ($rows as $row) {
-            $buckets[\Illuminate\Support\Carbon::parse($row->day)->toDateString()] = (float) $row->profit;
+            $buckets[Carbon::parse($row->day)->toDateString()] = (float) $row->profit;
         }
 
         $days = [];

@@ -10,6 +10,12 @@
                 <p class="text-xs text-green-600">We'll send you an email once your account is approved — usually within 24 hours.</p>
             </div>
             <a href="{{ route('login') }}" class="text-sm font-medium text-green-600">← Back to login</a>
+        @elseif (! empty($resendEmail))
+            <form method="post" action="{{ route('register.resend') }}" class="space-y-3">
+                @csrf
+                <input type="hidden" name="email" value="{{ $resendEmail }}">
+                <x-auth.submit label="Send a new link" loading="Sending..." />
+            </form>
         @else
             <a href="{{ route('register') }}" class="text-sm font-medium text-green-600">Try registering again</a>
         @endif

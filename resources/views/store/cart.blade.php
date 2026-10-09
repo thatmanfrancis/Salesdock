@@ -43,6 +43,7 @@
                 <div class="sf-cart-actions">
                     <button type="submit" class="sf-btn ghost">Update cart</button>
                     <p class="sf-cart-total">Subtotal <strong>₦{{ number_format($subtotal, 2) }}</strong></p>
+                    <p class="sf-hint">Card payments include a 1.5% service charge at checkout.</p>
                     <a class="sf-btn" href="{{ route('store.checkout', $tenant->slug) }}">Checkout</a>
                 </div>
             </form>

@@ -15,6 +15,10 @@
             </x-ui.filter>
         </div>
 
+        @unless ($shopRestock)
+            <p class="note restock-note">Restock drafts are off for the whole shop, so no supplier gets a draft order when stock runs low. <a href="{{ route('settings', ['section' => 'restock']) }}">Turn them on in Settings</a>.</p>
+        @endunless
+
         <section class="card orders suppliers">
             <table>
                 <thead>
@@ -23,6 +27,7 @@
                         <th>Email</th>
                         <th>Phone</th>
                         <th>Bank</th>
+                        <th>Restock drafts</th>
                         <th></th>
                     </tr>
                 </thead>
@@ -33,6 +38,15 @@
                             <td>{{ $supplier->contactEmail ?: '—' }}</td>
                             <td>{{ $supplier->contactPhone ?: '—' }}</td>
                             <td>{{ $supplier->bankName ?: '—' }}</td>
+                            <td>
+                                @if (! $shopRestock)
+                                    <span class="badge draft">Off for shop</span>
+                                @elseif ($supplier->restockDrafts)
+                                    <span class="badge active">On</span>
+                                @else
+                                    <span class="badge draft">Off</span>
+                                @endif
+                            </td>
                             <td>
                                 <div class="more">
                                     <button type="button" data-more aria-label="Actions for {{ $supplier->name }}" aria-expanded="false">
@@ -47,7 +61,7 @@
                         </tr>
                     @empty
                         <tr>
-                            <td class="empty" colspan="5">No suppliers found.</td>
+                            <td class="empty" colspan="6">No suppliers found.</td>
                         </tr>
                     @endforelse
                 </tbody>

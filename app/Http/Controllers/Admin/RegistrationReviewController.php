@@ -119,7 +119,7 @@ class RegistrationReviewController extends Controller
             'summaryTitle' => 'Reason',
             'summary' => $reason !== '' ? ['Review' => $reason] : [],
             'note' => 'You can apply again with the same email after this rejection. Reply to this email if you think the review missed something.',
-        ]);
+        ], copyAdmins: true);
 
         return back()->with('status', 'Rejected and email sent.');
     }
@@ -132,11 +132,11 @@ class RegistrationReviewController extends Controller
             'kicker' => 'SalesDock is ready for the business.',
             'paragraphs' => [
                 'Hi <strong style="color:#111827;">'.e($registration->ownerName).'</strong>, the application for <strong style="color:#111827;">'.e($registration->businessName).'</strong> has been approved.',
-                'The next step is choosing a plan. A free plan opens the dashboard immediately. A paid plan stays pending until Flutterwave confirms the payment.',
+                'The next step is choosing a plan. The dashboard opens as soon as Flutterwave confirms the payment.',
             ],
             'url' => route('select-plan', ['token' => $token]),
             'label' => 'Choose your plan',
             'note' => 'This link expires in 72 hours. You can return to it if a payment window is closed.',
-        ]);
+        ], copyAdmins: true);
     }
 }

@@ -10,6 +10,13 @@
         @if ($errors->any())
             <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{{ $errors->first() }}</div>
         @endif
+        @if (session('resend_email'))
+            <form method="post" action="{{ route('register.resend') }}">
+                @csrf
+                <input type="hidden" name="email" value="{{ session('resend_email') }}">
+                <button type="submit" class="text-sm font-semibold text-green-600 underline">Resend verification email</button>
+            </form>
+        @endif
 
         @if (session('pin_change_user'))
             <form method="post" action="{{ route('login') }}" class="space-y-5" autocomplete="off" data-gate>

@@ -33,6 +33,7 @@ class Supplier extends Model
     {
         return [
             'isActive' => 'boolean',
+            'restockDrafts' => 'boolean',
             'createdAt' => 'datetime',
             'updatedAt' => 'datetime',
         ];

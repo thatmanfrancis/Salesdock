@@ -20,7 +20,7 @@ class SelectPlanController extends Controller
         return view('auth.select-plan', [
             'registration' => $registration,
             'plans' => $registration
-                ? Plan::query()->where('isActive', true)->orderBy('monthlyPrice')->get()
+                ? Plan::query()->purchasable()->orderBy('monthlyPrice')->get()
                 : collect(),
             'token' => $request->query('token'),
         ]);
@@ -39,7 +39,7 @@ class SelectPlanController extends Controller
             return back()->withErrors(['token' => 'Invalid or expired plan selection link.']);
         }
 
-        $plan = Plan::query()->whereKey($data['planId'])->where('isActive', true)->first();
+        $plan = Plan::query()->purchasable()->whereKey($data['planId'])->first();
         if (! $plan) {
             return back()->withErrors(['planId' => 'Plan not found']);
         }
@@ -63,6 +63,9 @@ class SelectPlanController extends Controller
         $start = now();
         $end = $provisioner->periodEnd($start, $data['billingCycle']);
         $amount = $provisioner->price($plan, $data['billingCycle']);
+        if ($amount <= 0) {
+            return back()->withErrors(['billingCycle' => $plan->name.' is not available on that billing cycle. Choose another cycle.']);
+        }
         $invoice = $provisioner->openInvoice($tenant->id);
 
         $payload = [
@@ -83,15 +86,6 @@ class SelectPlanController extends Controller
                 'invoiceNumber' => 'INV-'.now()->timestamp.'-'.strtoupper(Str::random(5)),
                 'currency' => 'NGN',
                 'status' => 'PENDING',
-            ]);
-        }
-
-        if ($amount <= 0) {
-            $provisioner->activateFree($tenant, $plan, $data['billingCycle'], $invoice, $start, $end);
-
-            return view('auth.message', [
-                'title' => 'Plan active',
-                'body' => "{$plan->name} is active for {$registration->businessName}. Sign in with the email you registered.",
             ]);
         }
 

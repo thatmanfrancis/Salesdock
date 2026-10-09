@@ -3,12 +3,14 @@
 namespace App\Http\Middleware;
 
 use App\Models\Subscription;
+use App\Models\Tenant;
 use App\Support\Nav;
 use App\Support\Notices;
 use App\Support\Permissions;
 use App\Support\PlanFeatures;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\Response;
 
 class ShareWorkspace
@@ -17,17 +19,32 @@ class ShareWorkspace
     {
         $user = $request->user();
         $user?->loadMissing('role', 'tenant');
+        if ($user && $user->tenantId && ! $user->isSuperAdmin && ! $user->tenant) {
+            Auth::logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            return redirect()->route('login')->withErrors(['email' => Tenant::CLOSED_MESSAGE]);
+        }
         $role = $user?->isSuperAdmin ? 'SUPER_ADMIN' : ($user?->role?->role ?? 'CASHIER');
         $roleName = $user?->role?->name;
         $permissions = Permissions::normalize($user?->role?->permissions ?? []);
         $subscription = $user?->tenantId
             ? Subscription::query()->with('plan')->where('tenantId', $user->tenantId)->first()
             : null;
-        $features = is_array($subscription?->plan?->features) ? $subscription->plan->features : [];
+        $features = $subscription?->features() ?? [];
         $status = $subscription?->status;
-        $blocked = in_array($status, ['SUSPENDED', 'EXPIRED', 'CANCELLED'], true);
+        $ended = (bool) $subscription?->hasEnded();
+        $blocked = $ended || in_array($status, ['SUSPENDED', 'CANCELLED'], true);
+        $allowedWhileBlocked = $request->routeIs('suspended', 'logout') || $request->is('billing', 'billing/*', 'support', 'support/*');
 
-        if ($user && ! in_array($role, ['SUPER_ADMIN', 'ADMIN'], true) && $blocked && ! $request->routeIs('suspended') && ! $request->is('billing', 'billing/*')) {
+        if ($user && $role !== 'SUPER_ADMIN' && $blocked && ! $allowedWhileBlocked) {
+            if ($role === 'ADMIN') {
+                return redirect()->route('billing')->withErrors(['plan' => $ended
+                    ? 'Your subscription has ended. Choose a plan to keep using SalesDock.'
+                    : 'This subscription is not active. Choose a plan to continue.']);
+            }
+
             return redirect()->route('suspended');
         }
 

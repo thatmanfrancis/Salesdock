@@ -2,7 +2,9 @@
 
 namespace App\Models;
 
+use App\Services\RestockWatcher;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 class Product extends Model
 {
@@ -27,6 +29,14 @@ class Product extends Model
                 $model->{$model->getKeyName()} = (string) str()->ulid();
             }
         });
+
+        static::saved(function (self $model): void {
+            if (! $model->wasRecentlyCreated && ! $model->wasChanged(['currentStock', 'minThreshold', 'supplierId', 'isActive'])) {
+                return;
+            }
+            $productId = $model->getKey();
+            DB::afterCommit(fn () => app(RestockWatcher::class)->check($productId));
+        });
     }
 
     protected function casts(): array
@@ -45,6 +55,7 @@ class Product extends Model
             'isDiscounted' => 'boolean',
             'expiresAt' => 'datetime',
             'isActive' => 'boolean',
+            'restockDraftedAt' => 'datetime',
             'createdAt' => 'datetime',
             'updatedAt' => 'datetime',
         ];

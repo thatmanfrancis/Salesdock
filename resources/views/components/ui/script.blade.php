@@ -27,6 +27,7 @@
                 const menu = field.querySelector('[data-select-menu]');
                 const input = field.querySelector('[data-select-value]');
                 const label = field.querySelector('[data-select-label]');
+                if (!open || !menu || !input || !label) return;
                 const sync = () => {
                     let chosen = null;
                     menu.querySelectorAll('[role="option"]').forEach((option) => {
@@ -61,6 +62,7 @@
                 const label = field.querySelector('[data-date-label]');
                 const grid = field.querySelector('[data-cal-grid]');
                 const title = field.querySelector('[data-cal-title]');
+                if (!open || !calendar || !input || !label || !grid || !title) return;
                 const dated = /^\d{4}-\d{2}-\d{2}$/.test(input.value);
                 let selected = parse(input.value);
                 let picked = dated;
@@ -134,6 +136,7 @@
                 const opener = filter.querySelector('[data-filter-open]');
                 const panel = filter.querySelector('[data-filter-panel]');
                 const form = filter.querySelector('form');
+                if (!opener || !panel || !form) return;
                 const setOpen = (open) => {
                     panel.hidden = !open;
                     opener.setAttribute('aria-expanded', open ? 'true' : 'false');

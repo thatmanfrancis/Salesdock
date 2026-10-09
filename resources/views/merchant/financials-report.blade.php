@@ -53,4 +53,45 @@
             @endforelse
         </tbody>
     </table>
+
+    <h2>Operating expenses</h2>
+    @if ($filters !== [])
+        <p class="muted">Expenses follow the date range only; channel and cashier filters apply to sales.</p>
+    @endif
+    @if ($spendByCategory->isNotEmpty())
+        <div class="totals">
+            @foreach ($spendByCategory as $row)
+                <div><span>{{ $expenseLabels[$row->category] ?? $row->category }}</span><strong>{{ $money($row->total) }}</strong></div>
+            @endforeach
+        </div>
+    @endif
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Expense</th>
+                <th>Category</th>
+                <th>Payment</th>
+                <th class="num">Amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            @forelse ($expenses as $expense)
+                <tr>
+                    <td>{{ $expense->date?->timezone('Africa/Lagos')->format('d M Y') ?: '—' }}</td>
+                    <td>
+                        {{ $expense->title }}
+                        @foreach ($expense->items as $item)
+                            <div class="muted">{{ $item->name }}{{ $item->quantity ? ' · '.rtrim(rtrim(number_format((float) $item->quantity, 2), '0'), '.').($item->unit ? ' '.$item->unit : '') : '' }} — {{ $money($item->amount) }}</div>
+                        @endforeach
+                    </td>
+                    <td>{{ $expenseLabels[$expense->category] ?? $expense->category }}</td>
+                    <td>{{ $expenseMethods[$expense->paymentMethod ?? ''] ?? '—' }}</td>
+                    <td class="num">{{ $money($expense->amount) }}</td>
+                </tr>
+            @empty
+                <tr><td colspan="5">No expenses logged.</td></tr>
+            @endforelse
+        </tbody>
+    </table>
 @endsection

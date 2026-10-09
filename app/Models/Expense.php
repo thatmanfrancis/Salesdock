@@ -29,6 +29,16 @@ class Expense extends Model
         });
     }
 
+    public function items()
+    {
+        return $this->hasMany(ExpenseItem::class, 'expenseId')->orderBy('position');
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'createdBy');
+    }
+
     protected function casts(): array
     {
         return [

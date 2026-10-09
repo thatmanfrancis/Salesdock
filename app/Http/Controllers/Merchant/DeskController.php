@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Merchant;
 use App\Models\CatalogueProduct;
 use App\Models\Customer;
 use App\Models\Hold;
+use App\Models\Notification;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Plan;
@@ -13,22 +14,27 @@ use App\Models\ProductVariant;
 use App\Models\Promotion;
 use App\Models\PurchaseOrder;
 use App\Models\PurchaseOrderItem;
-use App\Models\Notification;
 use App\Models\Refund;
 use App\Models\SalesLedger;
 use App\Models\SalesLedgerItem;
 use App\Models\StockMovement;
 use App\Models\Subscription;
 use App\Models\Supplier;
+use App\Models\Tenant;
+use App\Models\TenantRegistration;
 use App\Models\Transaction;
+use App\Models\User;
+use App\Models\VatSettings;
 use App\Services\SaleRecorder;
+use App\Services\SupplierMessenger;
 use App\Support\Approval;
 use App\Support\Permissions;
 use App\Support\ProductCsv;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Validation\ValidationException;
 
 class DeskController extends MerchantController
@@ -64,7 +70,7 @@ class DeskController extends MerchantController
             $stats[] = ['label' => 'Open refunds', 'value' => $this->short(Refund::query()->where('tenantId', $tenantId)->where('status', 'PENDING')->count())];
         }
         if ($storewide && $can('canManageStaff')) {
-            $stats[] = ['label' => 'Active staff', 'value' => $this->short(\App\Models\User::query()->where('tenantId', $tenantId)->where('isActive', true)->count())];
+            $stats[] = ['label' => 'Active staff', 'value' => $this->short(User::query()->where('tenantId', $tenantId)->where('isActive', true)->count())];
         }
 
         $chart = $this->hourChart($sales);
@@ -106,7 +112,7 @@ class DeskController extends MerchantController
 
         $holds = Hold::query()->where('tenantId', $tenantId)->where('status', 'ACTIVE')->when($this->cashierOnly(), fn ($query) => $query->where('cashierId', $this->user()->id))->latest()->limit(12)->get();
         $items = OrderItem::query()->whereIn('orderId', $holds->pluck('orderId'))->get()->groupBy('orderId');
-        $vat = \App\Models\VatSettings::query()->where('tenantId', $tenantId)->first();
+        $vat = VatSettings::query()->where('tenantId', $tenantId)->first();
 
         return view('merchant.pos', [
             'products' => Product::query()->where('tenantId', $tenantId)->where('isActive', true)->orderBy('name')->get(),
@@ -188,7 +194,7 @@ class DeskController extends MerchantController
                 'success' => true,
                 'orderId' => $order->id,
                 'ref' => $ref,
-                'total' => '₦' . $total,
+                'total' => '₦'.$total,
                 'method' => $data['method'],
                 'orderUrl' => $orderUrl,
             ]);
@@ -444,7 +450,7 @@ class DeskController extends MerchantController
         [$used, $limit] = $this->productAllowance();
         $remaining = max(0, $limit - $used);
         $businessType = $this->tenantBusinessType();
-        $categories   = $this->starterCategoriesFor($businessType);
+        $categories = $this->starterCategoriesFor($businessType);
 
         $items = collect();
         if ($categories) {
@@ -470,12 +476,12 @@ class DeskController extends MerchantController
             ->all();
 
         return view('merchant.products-starter', [
-            'items'        => $items,
-            'used'         => $used,
-            'limit'        => $limit,
-            'remaining'    => $remaining,
+            'items' => $items,
+            'used' => $used,
+            'limit' => $limit,
+            'remaining' => $remaining,
             'businessType' => $businessType,
-            'existingNames'=> $existingNames,
+            'existingNames' => $existingNames,
         ]);
     }
 
@@ -484,10 +490,10 @@ class DeskController extends MerchantController
         abort_unless($this->managesProducts(), 403);
 
         $data = $request->validate([
-            'items'              => ['required', 'array', 'min:1'],
-            'items.*.id'         => ['required', 'string'],
-            'items.*.price'      => ['required', 'numeric', 'min:0.01'],
-            'items.*.stock'      => ['nullable', 'integer', 'min:0'],
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.id' => ['required', 'string'],
+            'items.*.price' => ['required', 'numeric', 'min:0.01'],
+            'items.*.stock' => ['nullable', 'integer', 'min:0'],
         ]);
 
         [$used, $limit] = $this->productAllowance();
@@ -503,21 +509,26 @@ class DeskController extends MerchantController
 
         foreach ($rows as $row) {
             $item = CatalogueProduct::query()->where('isActive', true)->find($row['id']);
-            if (! $item) { $skipped++; continue; }
+            if (! $item) {
+                $skipped++;
+
+                continue;
+            }
 
             if (Product::query()->where('tenantId', $this->tenantId())->where('isActive', true)->where('name', $item->name)->exists()) {
                 $skipped++;
+
                 continue;
             }
 
             try {
                 $this->saveNewProduct([
-                    'name'             => $item->name,
-                    'barcode'          => $item->barcode,
-                    'category'         => $item->category ?: 'General',
-                    'description'      => $item->description,
-                    'price'            => (float) $row['price'],
-                    'currentStock'     => (int) ($row['stock'] ?? 0),
+                    'name' => $item->name,
+                    'barcode' => $item->barcode,
+                    'category' => $item->category ?: 'General',
+                    'description' => $item->description,
+                    'price' => (float) $row['price'],
+                    'currentStock' => (int) ($row['stock'] ?? 0),
                     'availabilityMode' => 'BOTH',
                 ]);
                 $saved++;
@@ -544,15 +555,15 @@ class DeskController extends MerchantController
         }
 
         $map = [
-            'Supermarket'  => ['Food', 'Grocery', 'Beverages', 'General', 'Household'],
-            'Fashion'      => ['Fashion', 'Clothing', 'Accessories', 'Footwear', 'Apparel'],
-            'Electronics'  => ['Electronics', 'Gadgets', 'Accessories', 'Cables'],
-            'Pharmacy'     => ['Pharmacy', 'Medicine', 'Health', 'Personal Care', 'Wellness'],
-            'Restaurant'   => ['Food', 'Beverages', 'Drinks', 'Snacks'],
-            'Grocery'      => ['Grocery', 'Food', 'Beverages', 'Household'],
-            'Beauty'       => ['Beauty', 'Cosmetics', 'Skincare', 'Hair Care', 'Personal Care'],
-            'Hardware'     => ['Hardware', 'Tools', 'Building', 'Electrical'],
-            'General'      => ['General'],
+            'Supermarket' => ['Food', 'Grocery', 'Beverages', 'General', 'Household'],
+            'Fashion' => ['Fashion', 'Clothing', 'Accessories', 'Footwear', 'Apparel'],
+            'Electronics' => ['Electronics', 'Gadgets', 'Accessories', 'Cables'],
+            'Pharmacy' => ['Pharmacy', 'Medicine', 'Health', 'Personal Care', 'Wellness'],
+            'Restaurant' => ['Food', 'Beverages', 'Drinks', 'Snacks'],
+            'Grocery' => ['Grocery', 'Food', 'Beverages', 'Household'],
+            'Beauty' => ['Beauty', 'Cosmetics', 'Skincare', 'Hair Care', 'Personal Care'],
+            'Hardware' => ['Hardware', 'Tools', 'Building', 'Electrical'],
+            'General' => ['General'],
         ];
 
         return $map[$businessType] ?? ['General'];
@@ -563,7 +574,7 @@ class DeskController extends MerchantController
     {
         $email = $this->user()->email;
 
-        return \App\Models\TenantRegistration::query()
+        return TenantRegistration::query()
             ->whereRaw('lower(email) = ?', [mb_strtolower($email)])
             ->value('businessType');
     }
@@ -728,12 +739,12 @@ class DeskController extends MerchantController
             $query->where('cashierId', $cashier);
         }
         if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)) {
-            $query->where('createdAt', '>=', \Illuminate\Support\Carbon::parse($from)->startOfDay());
+            $query->where('createdAt', '>=', Carbon::parse($from)->startOfDay());
         } else {
             $from = '';
         }
         if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $to)) {
-            $query->where('createdAt', '<=', \Illuminate\Support\Carbon::parse($to)->endOfDay());
+            $query->where('createdAt', '<=', Carbon::parse($to)->endOfDay());
         } else {
             $to = '';
         }
@@ -743,7 +754,7 @@ class DeskController extends MerchantController
         $page = min($pages, max(1, (int) $request->query('page', 1)));
         $orders = $query->latest('createdAt')->forPage($page, $perPage)->get();
         $cashiers = $shop
-            ? \App\Models\User::query()->where('tenantId', $this->tenantId())->orderBy('name')->pluck('name', 'id')
+            ? User::query()->where('tenantId', $this->tenantId())->orderBy('name')->pluck('name', 'id')
             : collect();
 
         return view('merchant.orders', [
@@ -780,7 +791,7 @@ class DeskController extends MerchantController
             'items' => $items,
             'names' => $names,
             'transactions' => Transaction::query()->where('orderId', $order->id)->latest('createdAt')->get(),
-            'cashier' => $order->cashierId ? \App\Models\User::query()->whereKey($order->cashierId)->value('name') : null,
+            'cashier' => $order->cashierId ? User::query()->whereKey($order->cashierId)->value('name') : null,
             'ref' => strtoupper(substr((string) ($order->paymentRef ?: $order->id), -8)),
             'shop' => $shop,
             'open' => $shop && ! in_array($order->status, ['COMPLETED', 'CANCELLED', 'RETURNED'], true),
@@ -1221,6 +1232,7 @@ class DeskController extends MerchantController
             'page' => $page,
             'pages' => $pages,
             'filtered' => $q !== '',
+            'shopRestock' => (bool) Tenant::query()->whereKey($this->tenantId())->value('restockDrafts'),
         ]);
     }
 
@@ -1341,14 +1353,23 @@ class DeskController extends MerchantController
     public function showPurchaseOrder(PurchaseOrder $purchaseOrder)
     {
         $this->guardPurchaseOrder($purchaseOrder);
-        $items = PurchaseOrderItem::query()->where('purchaseOrderId', $purchaseOrder->id)->get();
+        $items = PurchaseOrderItem::query()->where('purchaseOrderId', $purchaseOrder->id)->orderBy('createdAt')->get();
         $supplier = Supplier::query()->whereKey($purchaseOrder->supplierId)->first();
+        $catalogue = $purchaseOrder->status === 'DRAFT'
+            ? Product::query()
+                ->where('tenantId', $purchaseOrder->tenantId)
+                ->where(fn ($query) => $query->where('isActive', true)->orWhereIn('id', $items->pluck('productId')))
+                ->orderBy('name')
+                ->get(['id', 'name', 'sku', 'currentStock', 'minThreshold', 'reorderQty', 'costPrice', 'supplierId'])
+            : Product::query()->whereIn('id', $items->pluck('productId'))->get(['id', 'name', 'sku', 'currentStock', 'minThreshold', 'reorderQty', 'costPrice', 'supplierId']);
 
         return view('merchant.purchase-order', [
             'order' => $purchaseOrder,
             'items' => $items,
-            'names' => Product::query()->whereIn('id', $items->pluck('productId'))->pluck('name', 'id'),
+            'names' => $catalogue->pluck('name', 'id'),
+            'catalogue' => $catalogue->keyBy('id'),
             'supplier' => $supplier,
+            'canEmail' => SupplierMessenger::channels($supplier) !== [],
             'ref' => strtoupper(substr($purchaseOrder->id, -8)),
         ]);
     }
@@ -1356,17 +1377,125 @@ class DeskController extends MerchantController
     public function sendPurchaseOrder(Request $request, PurchaseOrder $purchaseOrder)
     {
         $this->guardPurchaseOrder($purchaseOrder);
+
+        return $this->deliverPurchaseOrder($request, $purchaseOrder, $request->boolean('manual'));
+    }
+
+    private function deliverPurchaseOrder(Request $request, PurchaseOrder $purchaseOrder, bool $manual)
+    {
         if ($purchaseOrder->status !== 'DRAFT') {
             return back()->withErrors(['po' => 'Only a draft can be sent.']);
         }
+        if (! PurchaseOrderItem::query()->where('purchaseOrderId', $purchaseOrder->id)->exists()) {
+            return back()->withErrors(['po' => 'Add at least one product before sending.']);
+        }
+
+        $supplier = Supplier::query()->where('tenantId', $purchaseOrder->tenantId)->whereKey($purchaseOrder->supplierId)->first();
+        $channel = null;
+        if (! $manual) {
+            if (SupplierMessenger::channels($supplier) === []) {
+                return back()->withErrors(['po' => 'Add an email address for this supplier to send the order, or mark it as sent.']);
+            }
+            $tenant = Tenant::query()->findOrFail($purchaseOrder->tenantId);
+            $channel = app(SupplierMessenger::class)->sendPurchaseOrder($purchaseOrder, $supplier, $tenant);
+            if (! $channel) {
+                return back()->withErrors(['po' => 'We could not email '.$supplier->name.'. Try again, or mark it as sent if you shared it another way.']);
+            }
+        }
+
         $purchaseOrder->forceFill(['status' => 'SENT', 'sentAt' => now()])->save();
         $actor = $this->user();
         Approval::log($request, $purchaseOrder->tenantId, $actor->id, $actor->id, 'PO_SENT', [
             'poId' => $purchaseOrder->id,
             'status' => 'SENT',
+            'channel' => $channel ?? 'manual',
         ]);
 
-        return back()->with('status', 'Purchase order sent.');
+        return back()->with('status', $channel === 'email'
+            ? 'Purchase order emailed to '.$supplier->contactEmail.'.'
+            : 'Purchase order marked as sent.');
+    }
+
+    public function updatePurchaseOrder(Request $request, PurchaseOrder $purchaseOrder)
+    {
+        $this->guardPurchaseOrder($purchaseOrder);
+        if ($purchaseOrder->status !== 'DRAFT') {
+            return back()->withErrors(['po' => 'Only a draft can be edited.']);
+        }
+        $items = collect($request->input('items', []))
+            ->filter(fn ($row) => trim((string) ($row['productId'] ?? '')) !== '')
+            ->values()
+            ->all();
+        $request->merge(['items' => $items]);
+        $data = $request->validate([
+            'urgency' => ['required', 'in:LOW,MEDIUM,HIGH,CRITICAL,OUT_OF_STOCK'],
+            'notes' => ['nullable', 'string', 'max:500'],
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.productId' => ['required', 'string', 'distinct'],
+            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.unitCost' => ['required', 'numeric', 'min:0'],
+            'form' => ['nullable', 'string'],
+            'then' => ['nullable', 'in:save,send,mark'],
+        ], [
+            'items.required' => 'Keep at least one product on the order.',
+            'items.min' => 'Keep at least one product on the order.',
+            'items.*.productId.distinct' => 'Each product can only appear once.',
+        ]);
+        $tenantId = $purchaseOrder->tenantId;
+        $productIds = collect($data['items'])->pluck('productId')->unique();
+        $known = Product::query()->where('tenantId', $tenantId)->whereIn('id', $productIds)->pluck('id');
+        if ($known->count() !== $productIds->count()) {
+            throw ValidationException::withMessages(['items' => 'Choose products from this shop.']);
+        }
+
+        $actor = $this->user();
+        DB::transaction(function () use ($data, $purchaseOrder, $request, $actor) {
+            PurchaseOrderItem::query()->where('purchaseOrderId', $purchaseOrder->id)->delete();
+            $total = 0.0;
+            foreach ($data['items'] as $row) {
+                $quantity = (int) $row['quantity'];
+                $cost = round((float) $row['unitCost'], 2);
+                $lineTotal = round($cost * $quantity, 2);
+                $total += $lineTotal;
+                PurchaseOrderItem::query()->create([
+                    'purchaseOrderId' => $purchaseOrder->id,
+                    'productId' => $row['productId'],
+                    'quantityOrdered' => $quantity,
+                    'quantityReceived' => 0,
+                    'unitCost' => $cost,
+                    'lineTotal' => $lineTotal,
+                    'createdAt' => now(),
+                ]);
+            }
+            $purchaseOrder->forceFill([
+                'urgency' => $data['urgency'],
+                'notes' => trim((string) ($data['notes'] ?? '')) ?: null,
+                'totalCost' => round($total, 2),
+            ])->save();
+            Approval::log($request, $purchaseOrder->tenantId, $actor->id, $actor->id, 'PO_CREATED', [
+                'poId' => $purchaseOrder->id,
+                'status' => 'EDITED',
+                'totalCost' => round($total, 2),
+            ]);
+        });
+
+        return match ($data['then'] ?? 'save') {
+            'send' => $this->deliverPurchaseOrder($request, $purchaseOrder->fresh(), false),
+            'mark' => $this->deliverPurchaseOrder($request, $purchaseOrder->fresh(), true),
+            default => back()->with('status', 'Draft saved.'),
+        };
+    }
+
+    public function toggleSupplierRestock(Request $request, Supplier $supplier)
+    {
+        abort_unless($this->managesSuppliers(), 403);
+        abort_unless($supplier->tenantId === $this->tenantId(), 404);
+        $on = $request->boolean('restockDrafts');
+        $supplier->forceFill(['restockDrafts' => $on])->save();
+
+        return back()->with('status', $on
+            ? 'Restock drafts are on for '.$supplier->name.'.'
+            : 'Restock drafts are off for '.$supplier->name.'.');
     }
 
     public function cancelPurchaseOrder(Request $request, PurchaseOrder $purchaseOrder)
@@ -1443,7 +1572,25 @@ class DeskController extends MerchantController
         abort_unless($this->managesSuppliers(), 403);
         abort_unless($supplier->tenantId === $this->tenantId() && $supplier->isActive, 404);
 
-        return view('merchant.supplier', ['supplier' => $supplier]);
+        $products = Product::query()
+            ->where('tenantId', $supplier->tenantId)
+            ->where('supplierId', $supplier->id)
+            ->where('isActive', true)
+            ->orderByRaw('"currentStock" - "minThreshold"')
+            ->get(['id', 'name', 'sku', 'currentStock', 'minThreshold', 'reorderQty']);
+
+        return view('merchant.supplier', [
+            'supplier' => $supplier,
+            'products' => $products,
+            'shopRestock' => (bool) Tenant::query()->whereKey($supplier->tenantId)->value('restockDrafts'),
+            'openDraft' => PurchaseOrder::query()
+                ->where('tenantId', $supplier->tenantId)
+                ->where('supplierId', $supplier->id)
+                ->where('status', 'DRAFT')
+                ->where('isAutomatic', true)
+                ->latest('createdAt')
+                ->first(),
+        ]);
     }
 
     public function updateSupplier(Request $request, Supplier $supplier)
@@ -1873,8 +2020,8 @@ class DeskController extends MerchantController
             '7' => [now()->subDays(6)->startOfDay(), now()->endOfDay(), 'Last 7 days'],
             '30' => [now()->subDays(29)->startOfDay(), now()->endOfDay(), 'Last 30 days'],
             'custom' => [
-                $from ? \Illuminate\Support\Carbon::parse($from)->startOfDay() : now()->startOfDay(),
-                ($to ?: $from) ? \Illuminate\Support\Carbon::parse($to ?: $from)->endOfDay() : now()->endOfDay(),
+                $from ? Carbon::parse($from)->startOfDay() : now()->startOfDay(),
+                ($to ?: $from) ? Carbon::parse($to ?: $from)->endOfDay() : now()->endOfDay(),
                 'Custom',
             ],
             default => [now()->startOfDay(), now()->endOfDay(), 'Today'],
@@ -1967,17 +2114,20 @@ class DeskController extends MerchantController
                 if (! $paid) {
                     $product->forceFill(['currentStock' => max(0, $before - $qty)])->save();
                 }
+
                 continue;
             }
 
             if ($order->status === 'RESERVED' && $next === 'COMPLETED') {
                 $product->forceFill(['reservedQty' => max(0, $reserved - $qty)])->save();
                 $this->stockMove($product, $order, 'SALE', -$qty, $before + $qty, $before);
+
                 continue;
             }
 
             if ($order->status === 'PENDING' && $next === 'CANCELLED') {
                 $product->forceFill(['reservedQty' => max(0, $reserved - $qty)])->save();
+
                 continue;
             }
 
@@ -1987,6 +2137,7 @@ class DeskController extends MerchantController
                     'reservedQty' => max(0, $reserved - $qty),
                 ])->save();
                 $this->stockMove($product, $order, 'RETURN', $qty, $before, $before + $qty);
+
                 continue;
             }
 
@@ -2243,8 +2394,8 @@ class DeskController extends MerchantController
                 'productId' => 'Choose a product from this shop.',
             ]);
         }
-        $start = \Illuminate\Support\Carbon::parse($data['startDate'])->startOfDay();
-        $end = \Illuminate\Support\Carbon::parse($data['endDate'])->endOfDay();
+        $start = Carbon::parse($data['startDate'])->startOfDay();
+        $end = Carbon::parse($data['endDate'])->endOfDay();
 
         return [
             'name' => $data['name'],

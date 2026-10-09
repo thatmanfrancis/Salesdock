@@ -68,7 +68,7 @@ class PreviewAuthMail extends Command
                     'kicker' => 'SalesDock is ready for the business.',
                     'paragraphs' => [
                         'Hi <strong style="color:#111827;">Francis Uzoigwe</strong>, the application for <strong style="color:#111827;">Kemi\'s Fashion</strong> has been approved.',
-                        'The next step is choosing a plan. A free plan opens the dashboard immediately. A paid plan stays pending until Flutterwave confirms the payment.',
+                        'The next step is choosing a plan. The dashboard opens as soon as Flutterwave confirms the payment.',
                     ],
                     'url' => url('/select-plan?token=preview'),
                     'label' => 'Choose your plan',

@@ -49,7 +49,7 @@ class ExpireSubscriptions extends Command
                 'tenantId'  => $tenant->id,
                 'type'      => 'SUBSCRIPTION_EXPIRING',
                 'title'     => 'Subscription expired',
-                'message'   => 'Your plan has expired. You have ' . $daysLeft . ' day' . ($daysLeft === 1 ? '' : 's') . ' to renew before being moved to the free plan.',
+                'message'   => 'Your plan has expired. You have ' . $daysLeft . ' day' . ($daysLeft === 1 ? '' : 's') . ' to renew before your dashboard is locked.',
                 'isRead'    => false,
                 'createdAt' => now(),
             ]);
@@ -67,7 +67,7 @@ class ExpireSubscriptions extends Command
                     'kicker'     => $tenant->name,
                     'paragraphs' => [
                         'Hi <strong style="color:#111827;">' . e($owner->name) . '</strong>, your SalesDock subscription for <strong>' . e($tenant->name) . '</strong> has expired.',
-                        'You have <strong>' . $daysLeft . ' day' . ($daysLeft === 1 ? '' : 's') . '</strong> to renew before your account is automatically moved to the free plan. Your data stays safe throughout.',
+                        'You have <strong>' . $daysLeft . ' day' . ($daysLeft === 1 ? '' : 's') . '</strong> to renew. After that the dashboard is locked until a plan is paid for. Your data stays safe throughout.',
                     ],
                     'url'        => route('billing'),
                     'label'      => 'Renew now',

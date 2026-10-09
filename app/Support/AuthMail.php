@@ -2,12 +2,17 @@
 
 namespace App\Support;
 
+use App\Models\PlatformSetting;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class AuthMail
 {
-    public static function send(string $to, string $name, string $subject, array $mail): void
+    /**
+     * @param  bool  $copyAdmins  BCC the admin recipients from platform settings (applicant emails only).
+     * @param  array{address?: string, name?: string}  $replyTo
+     */
+    public static function send(string $to, string $name, string $subject, array $mail, bool $copyAdmins = false, array $replyTo = []): bool
     {
         $key = trim((string) config('services.zeptomail.key'));
         $from = trim((string) config('services.zeptomail.from'));
@@ -15,7 +20,7 @@ class AuthMail
         if ($key === '' || $from === '') {
             Log::error('zeptomail is not configured', ['to' => $to, 'subject' => $subject]);
 
-            return;
+            return false;
         }
 
         if (! str_starts_with($key, 'Zoho-enczapikey')) {
@@ -58,14 +63,28 @@ class AuthMail
             'inline_images' => [$logo],
         ];
 
-        $review = trim((string) config('services.zeptomail.review'));
-        if ($review !== '' && strcasecmp($review, $to) !== 0) {
-            $payload['bcc'] = [[
-                'email_address' => [
-                    'address' => $review,
-                    'name' => 'SalesDock review',
-                ],
+        if (filter_var($replyTo['address'] ?? '', FILTER_VALIDATE_EMAIL)) {
+            $payload['reply_to'] = [[
+                'address' => $replyTo['address'],
+                'name' => $replyTo['name'] ?? $replyTo['address'],
             ]];
+        }
+
+        if ($copyAdmins) {
+            $bcc = collect(PlatformSetting::adminNotifyEmails())
+                ->reject(fn (string $address) => strcasecmp($address, $to) === 0)
+                ->unique()
+                ->map(fn (string $address) => [
+                    'email_address' => [
+                        'address' => $address,
+                        'name' => 'SalesDock admin',
+                    ],
+                ])
+                ->values()
+                ->all();
+            if ($bcc !== []) {
+                $payload['bcc'] = $bcc;
+            }
         }
 
         try {
@@ -82,10 +101,16 @@ class AuthMail
                     'status' => $response->status(),
                     'body' => $response->json() ?? $response->body(),
                 ]);
+
+                return false;
             }
         } catch (\Throwable $e) {
             Log::error('zeptomail failed', ['to' => $to, 'subject' => $subject, 'error' => $e->getMessage()]);
+
+            return false;
         }
+
+        return true;
     }
 
     private static function brandName(string $name): string

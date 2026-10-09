@@ -27,6 +27,19 @@ class PlanFeatures
         '/roles' => ['Role Management'],
     ];
 
+    /**
+     * Every feature any page or plan can ask for, used to open the whole app during a trial.
+     *
+     * @return list<string>
+     */
+    public static function everything(): array
+    {
+        $features = array_merge(...array_values(self::GATES));
+        array_push($features, 'Storefront / Online Store', 'White-label Storefront');
+
+        return array_values(array_unique($features));
+    }
+
     public static function covers(string $path, array $features): bool
     {
         $path = '/'.ltrim($path, '/');
@@ -62,6 +75,7 @@ class PlanFeatures
                 $seen[$feature] = true;
                 if (str_starts_with($feature, 'Everything in ')) {
                     $walk(self::named(substr($feature, strlen('Everything in '))));
+
                     continue;
                 }
                 $out[] = $feature;

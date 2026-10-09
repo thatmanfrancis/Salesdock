@@ -16,6 +16,9 @@
             'subscription' => 'Subscription',
         ];
     }
+    if ($managesSuppliers ?? false) {
+        $sections = array_slice($sections, 0, -1, true) + ['restock' => 'Restock'] + ['subscription' => 'Subscription'];
+    }
     $rate = old('globalVatRate', $vat->globalVatRate ?? $tenant->taxRate ?? '7.5');
     $inclusive = old('section') === 'vat' ? (bool) old('isInclusive') : (bool) $vat->isInclusive;
     $public = old('section') === 'storefront' ? (bool) old('isPublic') : ($store->exists ? (bool) $store->isPublic : true);
@@ -199,6 +202,30 @@
                             </div>
                         </form>
                     </section>
+                @elseif ($section === 'restock')
+                    <section class="card profile-narrow">
+                        <form method="post" action="{{ route('settings.update') }}" data-busy>
+                            @csrf
+                            <input type="hidden" name="section" value="restock">
+                            <p class="kicker">Low-stock restock drafts</p>
+                            <p class="hint restock-intro">When a product drops to its low-stock threshold, SalesDock drafts a purchase order to that product's supplier. You review it, change anything you like, then send it. Nothing reaches a supplier without your confirmation.</p>
+                            <label class="switch">
+                                <span>Draft purchase orders when stock runs low</span>
+                                <input type="checkbox" name="restockDrafts" value="1" @checked($tenant->restockDrafts)>
+                            </label>
+                            <div class="supplier-facts">
+                                <div><span>Suppliers switched on</span><strong>{{ $restock['suppliersOn'] }} of {{ $restock['suppliers'] }}</strong></div>
+                                <div><span>Products with a supplier</span><strong>{{ $restock['linkedProducts'] }}</strong></div>
+                            </div>
+                            @if ($restock['unlinkedProducts'] > 0)
+                                <p class="hint">{{ $restock['unlinkedProducts'] }} {{ $restock['unlinkedProducts'] === 1 ? 'product has' : 'products have' }} no supplier, so {{ $restock['unlinkedProducts'] === 1 ? 'it' : 'they' }} will not be drafted. Pick a supplier and a low-stock threshold on each product.</p>
+                            @endif
+                            <p class="hint">You can switch individual suppliers on or off from <a href="{{ route('suppliers') }}">Suppliers</a>. When this switch is off, no supplier gets a draft.</p>
+                            <div class="ui-modal-actions">
+                                <button type="submit" data-loading="Saving…"><span data-label>Save</span></button>
+                            </div>
+                        </form>
+                    </section>
                 @else
                     <section class="card profile-narrow">
                         @if (! $subscription)
@@ -212,7 +239,7 @@
                             <div class="supplier-facts">
                                 <div>
                                     <span>Plan</span>
-                                    <strong>{{ $subscription->plan?->name ?: '—' }}</strong>
+                                    <strong>{{ $subscription->status === 'TRIALING' ? 'Free trial (all features)' : ($subscription->plan?->name ?: '—') }}</strong>
                                 </div>
                                 <div>
                                     <span>Tier</span>

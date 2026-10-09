@@ -68,6 +68,22 @@ class User extends Authenticatable
         return route('dashboard');
     }
 
+    /**
+     * Only the shop owner fills in the business details after signup; staff are never asked.
+     */
+    public function mustCompleteProfile(): bool
+    {
+        if ($this->isSuperAdmin || ! $this->tenantId) {
+            return false;
+        }
+
+        $tenant = $this->tenant;
+
+        return $tenant
+            && $tenant->profileCompletedAt === null
+            && strcasecmp((string) $tenant->email, (string) $this->email) === 0;
+    }
+
     protected function casts(): array
     {
         return [

@@ -3,7 +3,8 @@
 <head>
     <meta charset="utf-8">
     <title>{{ $title }} | SalesDock</title>
-    <link rel="icon" href="{{ asset('salesdockfavicon.png') }}" type="image/png">
+    <link rel="icon" href="{{ asset('salesdockfavicon.png') }}?v={{ filemtime(public_path('salesdockfavicon.png')) }}" type="image/png" sizes="32x32">
+    <link rel="apple-touch-icon" href="{{ asset('salesdockfavicon.png') }}?v={{ filemtime(public_path('salesdockfavicon.png')) }}">
     <link rel="preconnect" href="https://fonts.bunny.net">
     <link href="https://fonts.bunny.net/css?family=space-grotesk:400,500,600,700" rel="stylesheet">
     <style>
@@ -147,7 +148,7 @@
     <main>
         <div class="doc-header">
             <div class="doc-brand">
-                <img src="{{ asset('salesdockfavicon.png') }}" alt="SalesDock">
+                <img src="{{ asset('salesdockfavicon.png') }}?v={{ filemtime(public_path('salesdockfavicon.png')) }}" alt="SalesDock">
                 <strong>SalesDock</strong>
             </div>
             <div class="doc-title">

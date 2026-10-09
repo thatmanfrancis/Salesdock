@@ -5,19 +5,25 @@ namespace App\Http\Controllers\Platform;
 use App\Http\Controllers\Merchant\MerchantController;
 use App\Models\ActivityLog;
 use App\Models\AuditLog;
+use App\Models\AwayCheckIn;
 use App\Models\BillingInvoice;
 use App\Models\CatalogueProduct;
 use App\Models\Customer;
+use App\Models\Notification;
 use App\Models\PasswordResetToken;
-use App\Models\Product;
 use App\Models\Plan;
+use App\Models\PlatformSetting;
+use App\Models\Product;
+use App\Models\PurchaseOrder;
 use App\Models\SalesLedger;
 use App\Models\Subscription;
+use App\Models\Supplier;
 use App\Models\TaxFiling;
 use App\Models\Tenant;
 use App\Models\TenantRegistration;
 use App\Models\User;
 use App\Models\WebhookEvent;
+use App\Services\TenantEraser;
 use App\Support\AuthMail;
 use App\Support\CatalogueCategories;
 use Illuminate\Http\Request;
@@ -169,10 +175,12 @@ class PlatformController extends MerchantController
             $approval = '';
         }
         $status = (string) $request->query('status', '');
-        if (! in_array($status, ['active', 'inactive'], true)) {
+        if (! in_array($status, ['active', 'inactive', 'deleted'], true)) {
             $status = '';
         }
-        $query = Tenant::query()->latest('createdAt');
+        $query = $status === 'deleted'
+            ? Tenant::onlyTrashed()->latest('deletedAt')
+            : Tenant::query()->latest('createdAt');
         if ($q !== '') {
             $like = '%'.addcslashes($q, '%_\\').'%';
             $query->where(function ($row) use ($like) {
@@ -204,6 +212,7 @@ class PlatformController extends MerchantController
             'total' => $total,
             'page' => $page,
             'pages' => $pages,
+            'ownTenantId' => $this->user()->tenantId,
         ]);
     }
 
@@ -222,9 +231,29 @@ class PlatformController extends MerchantController
         return view('platform.tenant', [
             'tenant' => $tenant,
             'people' => $tenant->users()->with('role')->orderBy('name')->get(),
-            'own'    => $tenant->id === $this->user()->tenantId,
-            'me'     => $this->user()->id,
-            'plans'  => Plan::query()->where('isActive', true)->orderBy('monthlyPrice')->get(),
+            'own' => $tenant->id === $this->user()->tenantId,
+            'me' => $this->user()->id,
+            'plans' => Plan::query()->where('isActive', true)->orderBy('monthlyPrice')->get(),
+            'latestCheckIn' => AwayCheckIn::query()->with('user')->where('tenantId', $tenant->id)->latest('createdAt')->first(),
+            'deletedByName' => $tenant->deletedBy ? User::query()->whereKey($tenant->deletedBy)->value('name') : null,
+            'suppliers' => Supplier::query()
+                ->where('tenantId', $tenant->id)
+                ->select('suppliers.*')
+                ->selectSub(
+                    Product::query()->selectRaw('count(*)')->whereColumn('products.supplierId', 'suppliers.id')->where('products.isActive', true),
+                    'productsCount'
+                )
+                ->selectSub(
+                    Product::query()->selectRaw('count(*)')->whereColumn('products.supplierId', 'suppliers.id')->where('products.isActive', true)->whereColumn('products.currentStock', '<=', 'products.minThreshold'),
+                    'lowCount'
+                )
+                ->selectSub(
+                    PurchaseOrder::query()->selectRaw('count(*)')->whereColumn('purchase_orders.supplierId', 'suppliers.id')->where('purchase_orders.status', 'DRAFT'),
+                    'draftsCount'
+                )
+                ->orderByDesc('isActive')
+                ->orderBy('name')
+                ->get(),
         ]);
     }
 
@@ -267,20 +296,20 @@ class PlatformController extends MerchantController
     public function overrideSubscription(Request $request, Tenant $tenant)
     {
         $data = $request->validate([
-            'plan_id'       => ['required', 'string', 'exists:plans,id'],
+            'plan_id' => ['required', 'string', 'exists:plans,id'],
             'billing_cycle' => ['required', 'in:MONTHLY,QUARTERLY,ANNUALLY'],
-            'reason'        => ['required', 'string', 'min:10', 'max:500'],
+            'reason' => ['required', 'string', 'min:10', 'max:500'],
         ]);
 
-        $plan  = Plan::query()->findOrFail($data['plan_id']);
+        $plan = Plan::query()->findOrFail($data['plan_id']);
         $cycle = $data['billing_cycle'];
         $admin = $this->user();
-        $now   = now();
+        $now = now();
 
         $periodEnd = match ($cycle) {
             'QUARTERLY' => $now->copy()->addMonths(3),
-            'ANNUALLY'  => $now->copy()->addYear(),
-            default     => $now->copy()->addMonth(),
+            'ANNUALLY' => $now->copy()->addYear(),
+            default => $now->copy()->addMonth(),
         };
 
         $previous = Subscription::query()->where('tenantId', $tenant->id)->first();
@@ -289,112 +318,207 @@ class PlatformController extends MerchantController
         Subscription::query()->updateOrCreate(
             ['tenantId' => $tenant->id],
             [
-                'planId'             => $plan->id,
-                'status'             => 'ACTIVE',
-                'billingCycle'       => $cycle,
+                'planId' => $plan->id,
+                'status' => 'ACTIVE',
+                'billingCycle' => $cycle,
                 'currentPeriodStart' => $now,
-                'currentPeriodEnd'   => $periodEnd,
-                'gracePeriodDays'    => 7,
-                'gracePeriodEndsAt'  => $periodEnd->copy()->addDays(7),
-                'lastRenewedAt'      => $now,
-                'nextBillingDate'    => $periodEnd,
-                'cancelAtPeriodEnd'  => false,
-                'cancelledAt'       => null,
+                'currentPeriodEnd' => $periodEnd,
+                'gracePeriodDays' => 7,
+                'gracePeriodEndsAt' => $periodEnd->copy()->addDays(7),
+                'lastRenewedAt' => $now,
+                'nextBillingDate' => $periodEnd,
+                'cancelAtPeriodEnd' => false,
+                'cancelledAt' => null,
                 'cancellationReason' => null,
             ]
         );
 
         // Audit log
-        \App\Models\AuditLog::query()->create([
-            'tenantId'    => $tenant->id,
-            'userId'      => $admin->id,
-            'action'      => 'SETTINGS_UPDATED',
-            'details'     => [
-                'type'         => 'PLAN_OVERRIDE',
-                'fromPlan'     => $previousPlanName,
-                'toPlan'       => $plan->name,
+        AuditLog::query()->create([
+            'tenantId' => $tenant->id,
+            'userId' => $admin->id,
+            'action' => 'SETTINGS_UPDATED',
+            'details' => [
+                'type' => 'PLAN_OVERRIDE',
+                'fromPlan' => $previousPlanName,
+                'toPlan' => $plan->name,
                 'billingCycle' => $cycle,
-                'reason'       => $data['reason'],
-                'adminId'      => $admin->id,
-                'adminName'    => $admin->name,
+                'reason' => $data['reason'],
+                'adminId' => $admin->id,
+                'adminName' => $admin->name,
             ],
-            'ipAddress'   => $request->ip(),
-            'timestamp'   => $now,
+            'ipAddress' => $request->ip(),
+            'timestamp' => $now,
         ]);
 
         // In-app notification to merchant
-        \App\Models\Notification::query()->create([
-            'tenantId'  => $tenant->id,
-            'type'      => 'SYSTEM',
-            'title'     => 'Plan updated by SalesDock',
-            'message'   => 'Your plan has been changed to ' . $plan->name . ' (' . $cycle . ') by the SalesDock team.',
-            'isRead'    => false,
+        Notification::query()->create([
+            'tenantId' => $tenant->id,
+            'type' => 'SYSTEM',
+            'title' => 'Plan updated by SalesDock',
+            'message' => 'Your plan has been changed to '.$plan->name.' ('.$cycle.') by the SalesDock team.',
+            'isRead' => false,
             'createdAt' => $now,
         ]);
 
         // Email the tenant owner
-        $owner = \App\Models\User::query()
+        $owner = User::query()
             ->where('tenantId', $tenant->id)
             ->whereHas('role', fn ($q) => $q->where('name', 'Owner'))
             ->first();
 
         if ($owner?->email) {
-            \App\Support\AuthMail::send($owner->email, $owner->name, 'Your SalesDock plan has been updated', [
-                'preheader'  => 'Your plan has been changed to ' . $plan->name . '.',
-                'heading'    => 'Plan updated',
-                'kicker'     => $tenant->name,
+            AuthMail::send($owner->email, $owner->name, 'Your SalesDock plan has been updated', [
+                'preheader' => 'Your plan has been changed to '.$plan->name.'.',
+                'heading' => 'Plan updated',
+                'kicker' => $tenant->name,
                 'paragraphs' => [
-                    'Hi <strong style="color:#111827;">' . e($owner->name) . '</strong>, your SalesDock plan has been updated by our team.',
-                    'Your account for <strong>' . e($tenant->name) . '</strong> is now on the <strong>' . e($plan->name) . '</strong> plan (' . strtolower($cycle) . ' billing), effective immediately.',
-                    'Your new period ends on <strong>' . $periodEnd->timezone('Africa/Lagos')->format('d M Y') . '</strong>.',
+                    'Hi <strong style="color:#111827;">'.e($owner->name).'</strong>, your SalesDock plan has been updated by our team.',
+                    'Your account for <strong>'.e($tenant->name).'</strong> is now on the <strong>'.e($plan->name).'</strong> plan ('.strtolower($cycle).' billing), effective immediately.',
+                    'Your new period ends on <strong>'.$periodEnd->timezone('Africa/Lagos')->format('d M Y').'</strong>.',
                 ],
-                'url'    => route('billing'),
-                'label'  => 'View billing',
-                'note'   => 'If you have questions about this change, please contact our support team.',
+                'url' => route('billing'),
+                'label' => 'View billing',
+                'note' => 'If you have questions about this change, please contact our support team.',
             ]);
         }
 
-        return back()->with('status', 'Plan overridden to ' . $plan->name . ' for ' . $tenant->name . '.');
+        return back()->with('status', 'Plan overridden to '.$plan->name.' for '.$tenant->name.'.');
     }
 
-    public function destroyTenant(Tenant $tenant)
+    public function destroyTenant(Request $request, Tenant $tenant, TenantEraser $eraser)
     {
         if ($tenant->id === $this->user()->tenantId) {
             return back()->withErrors(['tenant' => 'This is your own shop.']);
         }
+        if ($tenant->trashed()) {
+            return back()->withErrors(['tenant' => 'This shop is already deleted.']);
+        }
 
-        $emails = $tenant->users()->pluck('email')
-            ->push($tenant->email)
-            ->filter()
-            ->unique()
-            ->values();
+        $eraser->close($tenant, $this->user()->id);
+
+        $message = $tenant->name.' deleted. You can restore it until '.$tenant->purgesAt()->timezone('Africa/Lagos')->format('d M Y').'.';
+        if ($request->input('from') === 'list') {
+            return back()->with('status', $message);
+        }
+
+        return redirect()->route('admin.tenants.show', $tenant)->with('status', $message);
+    }
+
+    public function restoreTenant(Tenant $tenant, TenantEraser $eraser)
+    {
+        if (! $tenant->trashed()) {
+            return back()->withErrors(['tenant' => 'This shop is not deleted.']);
+        }
+
+        $eraser->restore($tenant);
+
+        return back()->with('status', 'Shop restored. Everyone can sign in again.');
+    }
+
+    public function eraseTenant(Tenant $tenant, TenantEraser $eraser)
+    {
+        if ($tenant->id === $this->user()->tenantId) {
+            return back()->withErrors(['tenant' => 'This is your own shop.']);
+        }
+        if (! $tenant->trashed()) {
+            return back()->withErrors(['tenant' => 'Delete the shop first. It can then be erased for good.']);
+        }
 
         try {
-            DB::transaction(function () use ($tenant, $emails) {
-                $id = $tenant->id;
-                DB::table('sales_ledger')->where('tenantId', $id)->delete();
-                DB::table('refunds')->where('tenantId', $id)->delete();
-                DB::table('order_items')->whereIn('orderId', function ($query) use ($id) {
-                    $query->select('id')->from('orders')->where('tenantId', $id);
-                })->delete();
-                DB::table('purchase_order_items')->whereIn('purchaseOrderId', function ($query) use ($id) {
-                    $query->select('id')->from('purchase_orders')->where('tenantId', $id);
-                })->delete();
-                DB::table('purchase_orders')->where('tenantId', $id)->delete();
-                DB::table('staff_payroll')->where('tenantId', $id)->delete();
-                DB::table('users')->where('tenantId', $id)->delete();
-                $tenant->delete();
-                if ($emails->isNotEmpty()) {
-                    TenantRegistration::query()->whereIn('email', $emails)->delete();
-                }
-            });
+            $eraser->erase($tenant);
         } catch (\Throwable $e) {
             report($e);
 
-            return back()->withErrors(['tenant' => 'This shop could not be deleted.']);
+            return back()->withErrors(['tenant' => 'This shop could not be erased.']);
         }
 
-        return redirect()->route('admin.tenants')->with('status', 'Shop deleted.');
+        return redirect()->route('admin.tenants', ['status' => 'deleted'])->with('status', 'Shop and all its data erased.');
+    }
+
+    public function storeSupplier(Request $request, Tenant $tenant)
+    {
+        $supplier = Supplier::query()->create($this->supplierData($request) + [
+            'tenantId' => $tenant->id,
+            'isActive' => true,
+        ]);
+        $this->logSupplierChange($request, $tenant, $supplier, 'SUPPLIER_ADDED');
+
+        return back()->with('status', $supplier->name.' was added.');
+    }
+
+    public function updateSupplier(Request $request, Tenant $tenant, Supplier $supplier)
+    {
+        abort_unless($supplier->tenantId === $tenant->id, 404);
+        $supplier->update($this->supplierData($request));
+        $this->logSupplierChange($request, $tenant, $supplier, 'SUPPLIER_UPDATED');
+
+        return back()->with('status', $supplier->name.' was updated.');
+    }
+
+    public function destroySupplier(Request $request, Tenant $tenant, Supplier $supplier)
+    {
+        abort_unless($supplier->tenantId === $tenant->id, 404);
+        $supplier->forceFill(['isActive' => false])->save();
+        $this->logSupplierChange($request, $tenant, $supplier, 'SUPPLIER_DEACTIVATED');
+
+        return back()->with('status', $supplier->name.' was removed. You can restore it from this page.');
+    }
+
+    public function restoreSupplier(Request $request, Tenant $tenant, Supplier $supplier)
+    {
+        abort_unless($supplier->tenantId === $tenant->id, 404);
+        $supplier->forceFill(['isActive' => true])->save();
+        $this->logSupplierChange($request, $tenant, $supplier, 'SUPPLIER_RESTORED');
+
+        return back()->with('status', $supplier->name.' was restored.');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function supplierData(Request $request): array
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'contactEmail' => ['nullable', 'email', 'max:255'],
+            'contactPhone' => ['nullable', 'string', 'max:50'],
+            'contactWhatsapp' => ['nullable', 'string', 'max:50'],
+            'address' => ['nullable', 'string', 'max:255'],
+            'bankName' => ['nullable', 'string', 'max:120'],
+            'bankAccount' => ['nullable', 'string', 'max:50'],
+            'notes' => ['nullable', 'string', 'max:255'],
+            'restockDrafts' => ['nullable', 'boolean'],
+            'form' => ['nullable', 'string'],
+            'supplier' => ['nullable', 'string'],
+        ]);
+        unset($data['form'], $data['supplier']);
+        $data['name'] = trim($data['name']);
+        foreach (['contactEmail', 'contactPhone', 'contactWhatsapp', 'address', 'bankName', 'bankAccount', 'notes'] as $field) {
+            $data[$field] = trim((string) ($data[$field] ?? '')) ?: null;
+        }
+        $data['restockDrafts'] = $request->boolean('restockDrafts');
+
+        return $data;
+    }
+
+    private function logSupplierChange(Request $request, Tenant $tenant, Supplier $supplier, string $type): void
+    {
+        $admin = $this->user();
+        AuditLog::query()->create([
+            'tenantId' => $tenant->id,
+            'userId' => $admin->id,
+            'action' => 'SETTINGS_UPDATED',
+            'details' => [
+                'type' => $type,
+                'supplierId' => $supplier->id,
+                'supplierName' => $supplier->name,
+                'adminId' => $admin->id,
+                'adminName' => $admin->name,
+            ],
+            'ipAddress' => $request->ip(),
+            'timestamp' => now(),
+        ]);
     }
 
     public function destroyUser(Tenant $tenant, User $user)
@@ -1291,6 +1415,86 @@ class PlatformController extends MerchantController
                 ['label' => 'Pending', 'value' => number_format((int) ($summary->pending ?? 0)), 'class' => 'vat'],
                 ['label' => 'Failed', 'value' => number_format((int) ($summary->failed ?? 0)), 'class' => 'loss'],
             ],
+        ]);
+    }
+
+    public function settings()
+    {
+        return view('platform.settings', [
+            'notifyEmails' => PlatformSetting::adminNotifyEmails(),
+            'contact' => PlatformSetting::supportContact(),
+        ]);
+    }
+
+    public function updateContact(Request $request)
+    {
+        $data = $request->validate([
+            'email' => ['required', 'email:rfc', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:40'],
+            'whatsapp' => ['nullable', 'string', 'max:40'],
+            'hours' => ['nullable', 'string', 'max:120'],
+            'address' => ['nullable', 'string', 'max:500'],
+            'directions' => ['nullable', 'string', 'max:2000'],
+            'mapUrl' => ['nullable', 'url:https', 'max:1000'],
+        ], [
+            'mapUrl.url' => 'The map link must be a full https:// link, e.g. from Google Maps → Share.',
+        ]);
+
+        PlatformSetting::write('supportContact', array_map(
+            fn ($value) => is_string($value) && trim($value) !== '' ? trim($value) : null,
+            $data,
+        ));
+
+        return back()->with('status', 'Contact details saved.');
+    }
+
+    public function updateSettings(Request $request)
+    {
+        $emails = collect(preg_split('/[\s,;]+/', (string) $request->input('notifyEmails', '')))
+            ->map(fn ($email) => strtolower(trim((string) $email)))
+            ->filter()
+            ->unique()
+            ->values();
+        $request->merge(['emails' => $emails->all()]);
+        $request->validate([
+            'emails' => ['array', 'max:10'],
+            'emails.*' => ['email:rfc', 'max:255'],
+        ], [
+            'emails.max' => 'Add up to 10 addresses.',
+            'emails.*.email' => 'One of the addresses is not a valid email.',
+        ]);
+
+        PlatformSetting::write('adminNotifyEmails', $emails->all());
+
+        return back()->with('status', 'Settings saved.');
+    }
+
+    public function checkIns(Request $request)
+    {
+        $q = mb_substr(trim((string) $request->query('q', '')), 0, 80);
+        $withReason = $request->query('reason') === '1';
+        $query = AwayCheckIn::query()->with(['user', 'tenant'])->latest('createdAt');
+        if ($q !== '') {
+            $like = '%'.addcslashes($q, '%_\\').'%';
+            $query->where(function ($row) use ($like) {
+                $row->where('reason', 'ilike', $like)
+                    ->orWhereHas('user', fn ($user) => $user->where('name', 'ilike', $like)->orWhere('email', 'ilike', $like))
+                    ->orWhereHas('tenant', fn ($tenant) => $tenant->where('name', 'ilike', $like));
+            });
+        }
+        if ($withReason) {
+            $query->whereNotNull('reason')->where('reason', '!=', '');
+        }
+        [$checkIns, $total, $page, $pages] = $this->pageOf($query, $request);
+
+        return view('platform.check-ins', [
+            'checkIns' => $checkIns,
+            'q' => $q,
+            'withReason' => $withReason,
+            'filtered' => $q !== '' || $withReason,
+            'total' => $total,
+            'page' => $page,
+            'pages' => $pages,
         ]);
     }
 

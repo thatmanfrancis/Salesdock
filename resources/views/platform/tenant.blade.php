@@ -42,25 +42,39 @@
         <div class="order-head">
             <a class="back" href="{{ route('admin.tenants') }}">Back</a>
             <strong>{{ $tenant->name }}</strong>
-            <span class="badge {{ $tenant->isActive ? 'active' : 'cancelled' }}">{{ $tenant->isActive ? 'Active' : 'Inactive' }}</span>
-            <span class="badge {{ $tone[$tenant->approvalStatus] ?? 'draft' }}">{{ $approval[$tenant->approvalStatus] ?? $tenant->approvalStatus }}</span>
+            @if ($tenant->trashed())
+                <span class="badge overdue">Deleted</span>
+            @else
+                <span class="badge {{ $tenant->isActive ? 'active' : 'cancelled' }}">{{ $tenant->isActive ? 'Active' : 'Inactive' }}</span>
+                <span class="badge {{ $tone[$tenant->approvalStatus] ?? 'draft' }}">{{ $approval[$tenant->approvalStatus] ?? $tenant->approvalStatus }}</span>
+            @endif
             <div class="head-actions">
-                @if ($tenant->approvalStatus === 'PENDING')
+                @if ($tenant->trashed())
+                    <button type="button" data-ask data-url="{{ route('admin.tenants.restore', $tenant) }}" data-method="POST" data-title="Restore shop" data-copy="Restore {{ $tenant->name }}? The shop, its storefront and every login come back exactly as they were." data-label="Restore" data-loading="Restoring…">Restore</button>
+                    <button type="button" class="quiet" data-ask data-url="{{ route('admin.tenants.erase', $tenant) }}" data-method="DELETE" data-title="Delete permanently" data-copy="Erase {{ $tenant->name }} for good? Products, orders, customers, staff, invoices and every other record are removed. This cannot be undone." data-label="Delete permanently" data-loading="Erasing…" data-tone="danger">Delete permanently</button>
+                @elseif ($tenant->approvalStatus === 'PENDING')
                     <button type="button" data-ask data-url="{{ route('admin.tenants.update', $tenant) }}" data-method="POST" data-action="approve" data-title="Approve shop" data-copy="Approve {{ $tenant->name }}?" data-label="Approve" data-loading="Approving…">Approve</button>
                     <button type="button" class="quiet" data-ask data-url="{{ route('admin.tenants.update', $tenant) }}" data-method="POST" data-action="reject" data-title="Reject shop" data-copy="Reject {{ $tenant->name }}? This cannot be undone." data-label="Reject" data-loading="Rejecting…" data-tone="danger">Reject</button>
                 @endif
-                @if ($tenant->isActive)
+                @if ($tenant->isActive && ! $tenant->trashed())
                     @unless ($own)
                         <button type="button" class="quiet" data-ask data-url="{{ route('admin.tenants.update', $tenant) }}" data-method="POST" data-action="suspend" data-title="Suspend shop" data-copy="Suspend {{ $tenant->name }}? The shop cannot sell until you turn it back on." data-label="Suspend" data-loading="Suspending…" data-tone="danger">Suspend</button>
                     @endunless
-                @else
+                @elseif (! $tenant->trashed())
                     <button type="button" data-ask data-url="{{ route('admin.tenants.update', $tenant) }}" data-method="POST" data-action="activate" data-title="Turn shop on" data-copy="Turn {{ $tenant->name }} back on?" data-label="Reactivate" data-loading="Turning on…">Reactivate</button>
                 @endif
-                @unless ($own)
-                    <button type="button" class="quiet" data-ask data-url="{{ route('admin.tenants.destroy', $tenant) }}" data-method="DELETE" data-title="Delete shop" data-copy="Delete {{ $tenant->name }}? This removes the shop and everything on it. This cannot be undone." data-label="Delete" data-loading="Deleting…" data-tone="danger">Delete</button>
+                @unless ($own || $tenant->trashed())
+                    <button type="button" class="quiet" data-ask data-url="{{ route('admin.tenants.destroy', $tenant) }}" data-method="DELETE" data-title="Delete shop" data-copy="Delete {{ $tenant->name }}? The shop and storefront go offline and everyone is signed out. You can restore it within {{ \App\Models\Tenant::RESTORE_DAYS }} days; after that all its data is erased." data-label="Delete" data-loading="Deleting…" data-tone="danger">Delete</button>
                 @endunless
             </div>
         </div>
+
+        @if ($tenant->trashed())
+            <section class="card deleted-note">
+                <strong>This shop was deleted on {{ $tenant->deletedAt->timezone('Africa/Lagos')->format('d M Y, g:i a') }}{{ $deletedByName ? ' by '.$deletedByName : '' }}.</strong>
+                <p>Nobody can sign in and the storefront is offline. Restore it any time before {{ $tenant->purgesAt()->timezone('Africa/Lagos')->format('d M Y') }}. After that date the shop and everything tied to it is erased automatically.</p>
+            </section>
+        @endif
 
         <div class="order-grid">
             <div class="order-main">
@@ -135,7 +149,7 @@
                                     <td>{{ $person->role?->name ?: '—' }}</td>
                                     <td><span class="badge {{ $person->isActive ? 'active' : 'cancelled' }}">{{ $person->isActive ? 'Active' : 'Inactive' }}</span></td>
                                     <td>
-                                        @if ($person->id !== $me)
+                                        @if ($person->id !== $me && ! $tenant->trashed())
                                             <button type="button" class="quiet" data-ask data-url="{{ route('admin.tenants.users.destroy', [$tenant, $person]) }}" data-method="DELETE" data-title="Delete person" data-copy="Delete {{ $person->name }}? This cannot be undone." data-label="Delete" data-loading="Deleting…" data-tone="danger">Delete</button>
                                         @endif
                                     </td>
@@ -143,6 +157,74 @@
                             @empty
                                 <tr>
                                     <td class="empty" colspan="5">No users.</td>
+                                </tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </section>
+
+                <section class="card orders">
+                    <div class="band-head">
+                        <p class="kicker band">Suppliers</p>
+                        @unless ($tenant->trashed())
+                            <button type="button" class="tool" data-supplier-add>Add supplier</button>
+                        @endunless
+                    </div>
+                    @if ($suppliers->isNotEmpty())
+                        <p class="hint admin-restock">Restock drafts are <strong>{{ $tenant->restockDrafts ? 'on' : 'off' }}</strong> for this shop{{ $tenant->restockDrafts ? '' : ', so no supplier gets drafts' }}.</p>
+                    @endif
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Email</th>
+                                <th>Phone</th>
+                                <th class="num">Products</th>
+                                <th class="num">Low</th>
+                                <th class="num">Drafts</th>
+                                <th>Restock</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @forelse ($suppliers as $supplier)
+                                <tr>
+                                    <td>
+                                        {{ $supplier->name }}
+                                        @unless ($supplier->isActive)
+                                            <span class="pill">Deactivated</span>
+                                        @endunless
+                                    </td>
+                                    <td>{{ $show($supplier->contactEmail) }}</td>
+                                    <td>{{ $show($supplier->contactPhone ?: $supplier->contactWhatsapp) }}</td>
+                                    <td class="num">{{ number_format((int) $supplier->productsCount) }}</td>
+                                    <td class="num {{ (int) $supplier->lowCount > 0 ? 'stock low' : '' }}">{{ number_format((int) $supplier->lowCount) }}</td>
+                                    <td class="num">{{ number_format((int) $supplier->draftsCount) }}</td>
+                                    <td>
+                                        @if (! $supplier->isActive)
+                                            <span class="badge draft">—</span>
+                                        @elseif (! $tenant->restockDrafts)
+                                            <span class="badge draft">Off for shop</span>
+                                        @elseif ($supplier->restockDrafts)
+                                            <span class="badge active">On</span>
+                                        @else
+                                            <span class="badge draft">Off</span>
+                                        @endif
+                                    </td>
+                                    <td class="row-actions">
+                                        @unless ($tenant->trashed())
+                                            @if ($supplier->isActive)
+                                                <button type="button" class="quiet" data-supplier-edit data-url="{{ route('admin.tenants.suppliers.update', [$tenant, $supplier]) }}" data-id="{{ $supplier->id }}" data-name="{{ $supplier->name }}" data-email="{{ $supplier->contactEmail }}" data-phone="{{ $supplier->contactPhone }}" data-whatsapp="{{ $supplier->contactWhatsapp }}" data-address="{{ $supplier->address }}" data-bank="{{ $supplier->bankName }}" data-account="{{ $supplier->bankAccount }}" data-notes="{{ $supplier->notes }}" data-restock="{{ $supplier->restockDrafts ? '1' : '0' }}">Edit</button>
+                                                <button type="button" class="quiet" data-ask data-url="{{ route('admin.tenants.suppliers.destroy', [$tenant, $supplier]) }}" data-method="DELETE" data-title="Remove supplier" data-copy="Remove {{ $supplier->name }} from {{ $tenant->name }}? They leave the shop's supplier list and get no more restock drafts. Past purchase orders stay, and you can restore them here." data-label="Remove" data-loading="Removing…" data-tone="danger">Remove</button>
+                                            @else
+                                                <button type="button" class="quiet" data-ask data-url="{{ route('admin.tenants.suppliers.restore', [$tenant, $supplier]) }}" data-method="POST" data-title="Restore supplier" data-copy="Restore {{ $supplier->name }} to {{ $tenant->name }}'s supplier list?" data-label="Restore" data-loading="Restoring…">Restore</button>
+                                            @endif
+                                        @endunless
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr>
+                                    <td class="empty" colspan="8">No suppliers.</td>
                                 </tr>
                             @endforelse
                         </tbody>
@@ -156,6 +238,19 @@
                     <div class="info-row"><span>Users</span><strong>{{ number_format($tenant->usersCount) }}</strong></div>
                     <div class="info-row"><span>Orders</span><strong>{{ number_format($tenant->ordersCount) }}</strong></div>
                     <div class="info-row"><span>Products</span><strong>{{ number_format($tenant->productsCount) }}</strong></div>
+                    <div class="info-row"><span>Suppliers</span><strong>{{ number_format($suppliers->where('isActive', true)->count()) }}</strong></div>
+                </section>
+                <section class="card">
+                    <p class="kicker">Latest check-in</p>
+                    @if ($latestCheckIn)
+                        <div class="info-row"><span>Person</span><strong>{{ $latestCheckIn->user?->name ?: '—' }}</strong></div>
+                        <div class="info-row"><span>Days away</span><strong>{{ number_format($latestCheckIn->daysAway) }}</strong></div>
+                        <div class="info-row"><span>Date</span><strong>{{ $latestCheckIn->createdAt?->timezone('Africa/Lagos')->format('d M Y') ?: '—' }}</strong></div>
+                        <p class="muted" style="margin-top:0.5rem">{{ $latestCheckIn->reason ?: 'No reason given.' }}</p>
+                        <a href="{{ route('admin.check-ins', ['q' => $tenant->name]) }}">All check-ins</a>
+                    @else
+                        <p class="empty">No check-ins yet.</p>
+                    @endif
                 </section>
                 <section class="card">
                     <p class="kicker">Subscription</p>
@@ -170,6 +265,7 @@
                     @endif
                 </section>
 
+                @unless ($tenant->trashed())
                 <section class="card">
                     <p class="kicker">Plan Override</p>
                     <p class="muted" style="margin-bottom:0.75rem">Change this shop's plan immediately without requiring payment. A reason is mandatory and logged to the audit trail.</p>
@@ -207,6 +303,7 @@
                     </form>
                     @endif
                 </section>
+                @endunless
             </aside>
         </div>
     </div>
@@ -228,6 +325,74 @@
             </div>
         </form>
     </div>
+
+    @unless ($tenant->trashed())
+        @php
+            $supplierForm = in_array(old('form'), ['admin-supplier-create', 'admin-supplier-edit'], true) && $errors->any() ? old('form') : null;
+        @endphp
+        <div class="ui-modal" data-supplier-modal @unless ($supplierForm) hidden @endunless>
+            <button type="button" class="ui-filter-backdrop" data-close aria-label="Close"></button>
+            <form class="ui-modal-sheet" method="post" action="{{ $supplierForm === 'admin-supplier-edit' && old('supplier') ? route('admin.tenants.suppliers.update', [$tenant, old('supplier')]) : route('admin.tenants.suppliers.store', $tenant) }}" data-busy data-supplier-form>
+                @csrf
+                <input type="hidden" name="_method" value="{{ $supplierForm === 'admin-supplier-edit' ? 'PUT' : 'POST' }}" data-supplier-method>
+                <input type="hidden" name="form" value="{{ $supplierForm ?? 'admin-supplier-create' }}" data-supplier-kind>
+                <input type="hidden" name="supplier" value="{{ old('supplier') }}" data-supplier-id>
+                <div class="ui-filter-head">
+                    <strong data-supplier-title>{{ $supplierForm === 'admin-supplier-edit' ? 'Edit supplier' : 'Add supplier' }}</strong>
+                    <button type="button" class="ghost" data-close aria-label="Close">✕</button>
+                </div>
+                <p class="hint">Changes apply to {{ $tenant->name }} straight away and are recorded in the audit log.</p>
+                @include('merchant.partials.supplier-fields', ['form' => $supplierForm ?? '__none__', 'supplier' => null])
+                <label class="switch">
+                    <span>Draft an order when stock runs low</span>
+                    <input type="checkbox" name="restockDrafts" value="1" @checked($supplierForm ? (bool) old('restockDrafts') : true) data-supplier-restock>
+                </label>
+                <div class="ui-modal-actions">
+                    <button type="button" data-close>Cancel</button>
+                    <button type="submit" data-loading="Saving…"><span data-label>Save</span></button>
+                </div>
+            </form>
+        </div>
+        <script>
+            {
+                const supplierModal = document.querySelector('[data-supplier-modal]');
+                const supplierForm = supplierModal.querySelector('[data-supplier-form]');
+                const fill = (data) => {
+                    supplierForm.querySelectorAll('[data-field]').forEach((field) => {
+                        field.value = data[field.dataset.field] || '';
+                    });
+                    supplierForm.querySelector('[data-supplier-restock]').checked = data.restock !== '0';
+                };
+                const openSupplier = (mode, data) => {
+                    const editing = mode === 'edit';
+                    supplierForm.action = editing ? data.url : @json(route('admin.tenants.suppliers.store', $tenant));
+                    supplierForm.querySelector('[data-supplier-method]').value = editing ? 'PUT' : 'POST';
+                    supplierForm.querySelector('[data-supplier-kind]').value = editing ? 'admin-supplier-edit' : 'admin-supplier-create';
+                    supplierForm.querySelector('[data-supplier-id]').value = editing ? data.id : '';
+                    supplierModal.querySelector('[data-supplier-title]').textContent = editing ? 'Edit supplier' : 'Add supplier';
+                    fill(data);
+                    supplierModal.hidden = false;
+                    supplierForm.querySelector('[data-field="name"]').focus();
+                };
+                const closeSupplier = () => { if (!supplierModal.querySelector('button.is-busy')) supplierModal.hidden = true; };
+                document.querySelector('[data-supplier-add]')?.addEventListener('click', () => openSupplier('add', { restock: '1' }));
+                document.querySelectorAll('[data-supplier-edit]').forEach((button) => {
+                    button.addEventListener('click', () => openSupplier('edit', button.dataset));
+                });
+                supplierModal.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', closeSupplier));
+                supplierForm.addEventListener('submit', () => {
+                    const submit = supplierForm.querySelector('[type="submit"]');
+                    if (submit.disabled) return;
+                    submit.classList.add('is-busy');
+                    submit.querySelector('[data-label]').textContent = submit.dataset.loading;
+                    setTimeout(() => supplierForm.querySelectorAll('button').forEach((button) => { button.disabled = true; }), 0);
+                });
+                document.addEventListener('keydown', (event) => {
+                    if (event.key === 'Escape') closeSupplier();
+                });
+            }
+        </script>
+    @endunless
 
     <script>
         const modal = document.querySelector('[data-ask-modal]');

@@ -1,14 +1,15 @@
 <?php
 
+use App\Http\Middleware\EnsureAwayCheckIn;
 use App\Http\Middleware\EnsureReviewer;
 use App\Http\Middleware\EnsureSuperAdmin;
 use App\Http\Middleware\ShareWorkspace;
 use App\Models\User;
 use Illuminate\Foundation\Application;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -21,6 +22,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'reviewer' => EnsureReviewer::class,
             'workspace' => ShareWorkspace::class,
             'super' => EnsureSuperAdmin::class,
+            'away' => EnsureAwayCheckIn::class,
         ]);
         $middleware->validateCsrfTokens(except: ['billing/webhook']);
         $middleware->redirectGuestsTo('/login');

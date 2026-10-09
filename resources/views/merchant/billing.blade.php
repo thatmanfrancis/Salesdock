@@ -50,7 +50,20 @@
 @section('content')
     <div class="page">
         <section class="bill-now">
-            @if ($subscription?->plan)
+            @if ($subscription?->status === 'TRIALING')
+                @php
+                    $trialDays = $subscription->trialEndsAt ? max(0, (int) ceil(now()->diffInSeconds($subscription->trialEndsAt, false) / 86400)) : 0;
+                @endphp
+                <div>
+                    <span>Current plan</span>
+                    <strong>Free trial — every feature unlocked</strong>
+                    <p>
+                        <span class="badge pending">{{ $statuses['TRIALING'] }}</span>
+                        Ends {{ $subscription->trialEndsAt?->timezone('Africa/Lagos')->format('d M Y') ?: '—' }}.
+                    </p>
+                    <p class="bill-trial">{{ $trialDays }} {{ $trialDays === 1 ? 'day' : 'days' }} left. Pick a plan before the trial ends to keep selling without interruption.</p>
+                </div>
+            @elseif ($subscription?->plan)
                 <div>
                     <span>Current plan</span>
                     <strong>{{ $subscription->plan->name }}</strong>
@@ -82,7 +95,7 @@
         <div class="plan-grid">
             @foreach ($plans as $plan)
                 @php
-                    $same = $subscription && $subscription->planId === $plan->id;
+                    $same = $subscription && $subscription->status !== 'TRIALING' && $subscription->planId === $plan->id;
                     $current = $same && $subscription->billingCycle === $cycle;
                     $amount = (float) match ($cycle) {
                         'QUARTERLY' => $plan->quarterlyPrice,
@@ -118,7 +131,7 @@
                                 <button type="button" disabled>Payment key missing</button>
                             @elseif ($same)
                                 <button type="submit">Switch to {{ strtolower($cycles[$cycle]) }}</button>
-                            @elseif ($subscription)
+                            @elseif ($subscription && $subscription->status !== 'TRIALING')
                                 <button type="submit">Switch to this plan</button>
                             @else
                                 <button type="submit">Get started</button>

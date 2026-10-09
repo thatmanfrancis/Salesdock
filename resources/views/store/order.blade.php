@@ -48,9 +48,7 @@
 
         @php
             $itemsTotal  = $items->sum('lineTotal');
-            $orderMethod = strtoupper((string) ($order->method ?? ''));
-            // Service charge is only on card payments
-            $serviceFee  = ($orderMethod === 'CARD') ? round($itemsTotal * 0.015, 2) : 0;
+            $serviceFee  = (float) ($order->serviceCharge ?? 0);
         @endphp
 
         <div class="sf-summary-fees" style="margin-top:0.75rem">

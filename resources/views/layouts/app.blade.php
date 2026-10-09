@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
     <title>@yield('title', 'SalesDock')</title>
     @include('partials.favicon')
     <link rel="preconnect" href="https://fonts.bunny.net">
@@ -68,6 +68,11 @@
                 <span>Your workspace is in preview. Choose a plan to unlock selling, inventory, and staff tools.</span>
                 <a href="{{ route('billing') }}">Choose a plan</a>
             </div>
+        @elseif (($subscription ?? null) && $subscription->hasEnded())
+            <div class="banner banner-warn">
+                <span>Your {{ $subscription->status === 'TRIALING' ? 'free trial' : 'subscription' }} has ended. Choose a plan to unlock your dashboard. Your data is safe.</span>
+                <a href="{{ route('billing') }}">Choose a plan</a>
+            </div>
         @elseif (($subscription ?? null) && $subscription->status === 'PAST_DUE')
             @php
                 $graceEnds = $subscription->gracePeriodEndsAt;
@@ -77,9 +82,9 @@
                 <span>
                     Your subscription has expired.
                     @if ($daysLeft > 0)
-                        You have <strong>{{ $daysLeft }} day{{ $daysLeft === 1 ? '' : 's' }}</strong> before your account moves to the free plan.
+                        You have <strong>{{ $daysLeft }} day{{ $daysLeft === 1 ? '' : 's' }}</strong> to renew before your dashboard is locked.
                     @else
-                        Your account will be moved to the free plan shortly.
+                        Renew now to keep your dashboard open.
                     @endif
                 </span>
                 <a href="{{ route('billing') }}">Renew now</a>
@@ -95,7 +100,7 @@
             @if (!empty($paywallLocked))
                 <a class="unlock" href="{{ route('billing') }}">
                     <strong>Unlock SalesDock</strong>
-                    <p class="muted">Pick a free or paid plan to start using POS, products, and the rest of your dashboard.</p>
+                    <p class="muted">Pick a plan to start using POS, products, and the rest of your dashboard.</p>
                     <span class="btn">View plans</span>
                 </a>
             @endif
@@ -142,6 +147,10 @@
             }, { passive: true });
         });
     </script>
+    @if (auth()->user()?->mustCompleteProfile())
+        @include('partials.profile-prompt')
+    @endif
+
     {{-- Sign out confirmation modal --}}
     <div class="ui-modal" id="signout-modal" hidden>
         <button type="button" class="ui-filter-backdrop" id="signout-backdrop" aria-label="Close"></button>

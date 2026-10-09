@@ -19,9 +19,11 @@ use Illuminate\Support\Str;
 
 class TenantProvisioner
 {
+    public const TRIAL_DAYS = 30;
+
     public function provision(TenantRegistration $registration): Tenant
     {
-        $existing = Tenant::query()->where('email', $registration->email)->first();
+        $existing = Tenant::withTrashed()->where('email', $registration->email)->first();
         if ($existing) {
             return $existing;
         }
@@ -96,8 +98,50 @@ class TenantProvisioner
                 'updatedAt' => now(),
             ]);
 
+            $this->startTrial($tenant);
+
             return $tenant;
         });
+    }
+
+    /**
+     * Open every feature for a new shop until the trial ends; after that the shop must pay for a plan.
+     */
+    public function startTrial(Tenant $tenant): ?Subscription
+    {
+        $plan = Plan::query()->where('isActive', true)->orderByDesc('monthlyPrice')->first();
+        if (! $plan) {
+            return null;
+        }
+
+        $start = now();
+        $end = $start->copy()->addDays(self::TRIAL_DAYS);
+
+        $subscription = Subscription::query()->updateOrCreate(
+            ['tenantId' => $tenant->id],
+            [
+                'planId' => $plan->id,
+                'status' => 'TRIALING',
+                'billingCycle' => 'MONTHLY',
+                'currentPeriodStart' => $start,
+                'currentPeriodEnd' => $end,
+                'trialEndsAt' => $end,
+                'gracePeriodDays' => 7,
+                'gracePeriodEndsAt' => null,
+                'nextBillingDate' => $end,
+                'cancelAtPeriodEnd' => false,
+            ]
+        );
+
+        Notification::query()->create([
+            'tenantId' => $tenant->id,
+            'type' => 'SYSTEM',
+            'title' => 'Free trial started',
+            'message' => 'Every SalesDock feature is unlocked for '.self::TRIAL_DAYS.' days, until '.$end->timezone('Africa/Lagos')->toFormattedDateString().'.',
+            'createdAt' => now(),
+        ]);
+
+        return $subscription;
     }
 
     public function price(Plan $plan, string $cycle): float
@@ -127,55 +171,6 @@ class TenantProvisioner
             ->first();
     }
 
-    public function activateFree(Tenant $tenant, Plan $plan, string $cycle, BillingInvoice $invoice, Carbon $start, Carbon $end): void
-    {
-        $grace = $end->copy()->addDays(7);
-
-        $subscription = Subscription::query()->updateOrCreate(
-            ['tenantId' => $tenant->id],
-            [
-                'planId' => $plan->id,
-                'status' => 'ACTIVE',
-                'billingCycle' => $cycle,
-                'currentPeriodStart' => $start,
-                'currentPeriodEnd' => $end,
-                'gracePeriodDays' => 7,
-                'gracePeriodEndsAt' => $grace,
-                'lastRenewedAt' => now(),
-                'nextBillingDate' => $end,
-                'cancelAtPeriodEnd' => false,
-                'cancelledAt' => null,
-                'cancellationReason' => null,
-            ]
-        );
-
-        $invoice->update([
-            'subscriptionId' => $subscription->id,
-            'status' => 'PAID',
-            'gateway' => 'CASH',
-            'gatewayRef' => 'FREE-'.$invoice->id,
-            'paidAt' => now(),
-            'amount' => 0,
-        ]);
-
-        TenantRegistration::query()
-            ->where('email', $tenant->email)
-            ->where('planSelected', false)
-            ->update([
-                'planSelected' => true,
-                'planToken' => null,
-                'planTokenExp' => null,
-            ]);
-
-        Notification::query()->create([
-            'tenantId' => $tenant->id,
-            'type' => 'SUBSCRIPTION_RENEWED',
-            'title' => 'Free Plan Activated',
-            'message' => 'Your free SalesDock plan is active. Next review date: '.$end->toFormattedDateString().'.',
-            'createdAt' => now(),
-        ]);
-    }
-
     private function uniqueSlug(string $name): string
     {
         $base = Str::slug($name) ?: 'store';
@@ -183,12 +178,11 @@ class TenantProvisioner
         $slug = $base;
         $n = 0;
 
-        while (Tenant::query()->where('slug', $slug)->exists()) {
+        while (Tenant::withTrashed()->where('slug', $slug)->exists()) {
             $n++;
             $slug = $base.'-'.$n;
         }
 
         return $slug;
     }
-
 }

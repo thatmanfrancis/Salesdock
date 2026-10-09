@@ -30,9 +30,57 @@
                     <div><span>Account number</span><strong>{{ $show($supplier->bankAccount) }}</strong></div>
                     <div class="wide"><span>Notes</span><strong>{{ $show($supplier->notes) }}</strong></div>
                 </div>
+
+                <p class="kicker band">Products from this supplier</p>
+                <div class="orders">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Product</th>
+                                <th class="num">In stock</th>
+                                <th class="num">Threshold</th>
+                                <th class="num">Reorder qty</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @forelse ($products as $product)
+                                @php $tone = (int) $product->currentStock <= 0 ? 'out' : ((int) $product->currentStock <= (int) $product->minThreshold ? 'low' : 'ok'); @endphp
+                                <tr>
+                                    <td><a href="{{ route('products.show', $product) }}">{{ $product->name }}</a></td>
+                                    <td class="num stock {{ $tone }}">{{ $tone === 'out' ? 'Out' : $product->currentStock }}</td>
+                                    <td class="num">{{ $product->minThreshold }}</td>
+                                    <td class="num">{{ (int) $product->reorderQty > 0 ? $product->reorderQty : 'Auto' }}</td>
+                                </tr>
+                            @empty
+                                <tr><td class="empty" colspan="4">No products are linked to this supplier yet. Pick this supplier on a product to link it.</td></tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
             </section>
 
             <aside class="order-side">
+                <section class="card restock-card">
+                    <p class="kicker">Restock drafts</p>
+                    <form method="post" action="{{ route('suppliers.restock', $supplier) }}" data-restock-form>
+                        @csrf
+                        <input type="hidden" name="restockDrafts" value="0">
+                        <label class="switch">
+                            <span>Draft an order when stock runs low</span>
+                            <input type="checkbox" name="restockDrafts" value="1" @checked($shopRestock && $supplier->restockDrafts) @disabled(! $shopRestock) data-restock-toggle>
+                        </label>
+                    </form>
+                    @if (! $shopRestock)
+                        <p class="hint">Off for the whole shop. <a href="{{ route('settings', ['section' => 'restock']) }}">Turn it on in Settings</a> first.</p>
+                    @elseif (! $supplier->contactEmail)
+                        <p class="hint">Add an email for this supplier so drafts can be sent to them.</p>
+                    @else
+                        <p class="hint">When a product from this supplier hits its threshold, we draft a purchase order for you to review. Nothing goes to {{ $supplier->name }} until you send it.</p>
+                    @endif
+                    @if ($openDraft)
+                        <a class="btn" href="{{ route('inventory.orders.show', $openDraft) }}">Review draft PO #{{ strtoupper(substr($openDraft->id, -8)) }}</a>
+                    @endif
+                </section>
                 <section class="card">
                     <p class="kicker">Contact</p>
                     <div class="info-row"><span>Email</span><strong>{{ $show($supplier->contactEmail) }}</strong></div>
@@ -88,6 +136,9 @@
         const close = (modal) => { if (modal && !modal.querySelector('button.is-busy')) modal.hidden = true; };
         document.querySelector('[data-edit-open]')?.addEventListener('click', () => { editModal.hidden = false; });
         document.querySelector('[data-remove-open]')?.addEventListener('click', () => { deleteModal.hidden = false; });
+        document.querySelector('[data-restock-toggle]')?.addEventListener('change', (event) => {
+            event.target.closest('form').submit();
+        });
         [editModal, deleteModal].forEach((modal) => {
             modal.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => close(modal)));
         });

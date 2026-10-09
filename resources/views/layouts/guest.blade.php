@@ -2,12 +2,17 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
     <title>@yield('title', 'SalesDock')</title>
     @include('partials.favicon')
     <link rel="preconnect" href="https://fonts.bunny.net">
     <link href="https://fonts.bunny.net/css?family=space-grotesk:400,500,600,700" rel="stylesheet">
     @vite(['resources/css/app.css'])
+    <style>
+        @media (max-width: 768px) {
+            input, select, textarea { font-size: 16px !important; }
+        }
+    </style>
 </head>
 <body class="min-h-screen bg-white font-sans text-gray-900 antialiased">
     @yield('content')

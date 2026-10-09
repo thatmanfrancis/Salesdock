@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\PlanFeatures;
 use Illuminate\Database\Eloquent\Model;
 
 class Subscription extends Model
@@ -27,6 +28,40 @@ class Subscription extends Model
                 $model->{$model->getKeyName()} = (string) str()->ulid();
             }
         });
+    }
+
+    public function onTrial(): bool
+    {
+        return $this->status === 'TRIALING' && $this->trialEndsAt?->isFuture();
+    }
+
+    /**
+     * The trial or paid period is over and the shop must pick a paid plan to continue.
+     */
+    public function hasEnded(): bool
+    {
+        if ($this->status === 'EXPIRED') {
+            return true;
+        }
+
+        return $this->status === 'TRIALING' && ! $this->trialEndsAt?->isFuture();
+    }
+
+    /**
+     * Features this shop can use right now. A running trial opens everything; an ended one opens nothing.
+     *
+     * @return list<string>
+     */
+    public function features(): array
+    {
+        if ($this->onTrial()) {
+            return PlanFeatures::everything();
+        }
+        if ($this->hasEnded()) {
+            return [];
+        }
+
+        return is_array($this->plan?->features) ? $this->plan->features : [];
     }
 
     public function plan()

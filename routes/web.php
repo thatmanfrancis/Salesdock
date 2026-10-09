@@ -2,11 +2,13 @@
 
 use App\Http\Controllers\Admin\RegistrationReviewController;
 use App\Http\Controllers\Admin\SupportController as AdminSupportController;
+use App\Http\Controllers\Auth\CompleteProfileController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\PasswordController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Auth\SelectPlanController;
 use App\Http\Controllers\Auth\VerifyEmailController;
+use App\Http\Controllers\Auth\WelcomeBackController;
 use App\Http\Controllers\Billing\PaymentController;
 use App\Http\Controllers\Merchant\DeskController;
 use App\Http\Controllers\Merchant\OfficeController;
@@ -14,6 +16,7 @@ use App\Http\Controllers\Merchant\SupportController;
 use App\Http\Controllers\Platform\PlatformController;
 use App\Http\Controllers\Storefront\StorefrontController;
 use App\Models\Plan;
+use App\Models\PlatformSetting;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
@@ -25,23 +28,29 @@ Route::get('/', function () {
     if ($user instanceof User) {
         return redirect($user->homePath());
     }
-    $plans = Plan::query()->where('isActive', true)->orderBy('monthlyPrice')->get();
+    $plans = Plan::query()->purchasable()->orderBy('monthlyPrice')->get();
 
     return view('home', ['plans' => $plans]);
 })->name('home');
+
+Route::get('/help', fn () => view('pages.help', ['contact' => PlatformSetting::supportContact()]))->name('help');
+Route::get('/privacy', fn () => view('pages.privacy', ['contact' => PlatformSetting::supportContact()]))->name('privacy');
+Route::get('/terms', fn () => view('pages.terms', ['contact' => PlatformSetting::supportContact()]))->name('terms');
 
 Route::middleware('guest')->group(function () {
     Route::get('/login', [LoginController::class, 'create'])->name('login');
     Route::post('/login', [LoginController::class, 'store']);
     Route::get('/register', [RegisterController::class, 'create'])->name('register');
     Route::post('/register', [RegisterController::class, 'store']);
+    Route::post('/register/resend', [RegisterController::class, 'resend'])->middleware('throttle:5,1')->name('register.resend');
     Route::get('/forgot-password', [PasswordController::class, 'requestForm'])->name('password.request');
     Route::post('/forgot-password', [PasswordController::class, 'send'])->name('password.email');
     Route::get('/reset-password', [PasswordController::class, 'resetForm'])->name('password.reset');
     Route::post('/reset-password', [PasswordController::class, 'reset'])->name('password.update');
 });
 
-Route::get('/verify-email', VerifyEmailController::class)->name('verify-email');
+Route::get('/verify-email', [VerifyEmailController::class, 'show'])->name('verify-email');
+Route::post('/verify-email', [VerifyEmailController::class, 'store'])->name('verify-email.store');
 Route::view('/registration-received', 'auth.received')->name('registration-received');
 
 Route::get('/select-plan', [SelectPlanController::class, 'create'])->name('select-plan');
@@ -77,8 +86,12 @@ Route::prefix('store/{slug}')->group(function () {
 
 Route::middleware('auth')->group(function () {
     Route::post('/logout', [LoginController::class, 'destroy'])->name('logout');
+    Route::get('/welcome-back', [WelcomeBackController::class, 'show'])->name('welcome-back');
+    Route::post('/welcome-back', [WelcomeBackController::class, 'store'])->name('welcome-back.store');
+    Route::get('/complete-profile', [CompleteProfileController::class, 'show'])->name('complete-profile');
+    Route::post('/complete-profile', [CompleteProfileController::class, 'store'])->name('complete-profile.store');
 
-    Route::middleware('workspace')->group(function () {
+    Route::middleware(['away', 'workspace'])->group(function () {
         Route::view('/suspended', 'suspended')->name('suspended');
         Route::view('/unauthorized', 'unauthorized')->name('unauthorized');
         Route::view('/not-eligible', 'not-eligible')->name('not-eligible');
@@ -124,6 +137,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/inventory/purchase-orders', [DeskController::class, 'purchaseOrders'])->name('inventory.orders');
         Route::post('/inventory/purchase-orders', [DeskController::class, 'storePurchaseOrder'])->name('inventory.orders.store');
         Route::get('/inventory/purchase-orders/{purchaseOrder}', [DeskController::class, 'showPurchaseOrder'])->name('inventory.orders.show');
+        Route::put('/inventory/purchase-orders/{purchaseOrder}', [DeskController::class, 'updatePurchaseOrder'])->name('inventory.orders.update');
         Route::post('/inventory/purchase-orders/{purchaseOrder}/send', [DeskController::class, 'sendPurchaseOrder'])->name('inventory.orders.send');
         Route::post('/inventory/purchase-orders/{purchaseOrder}/cancel', [DeskController::class, 'cancelPurchaseOrder'])->name('inventory.orders.cancel');
         Route::post('/inventory/purchase-orders/{purchaseOrder}/receive', [DeskController::class, 'receivePurchaseOrder'])->name('inventory.orders.receive');
@@ -131,6 +145,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/suppliers', [DeskController::class, 'storeSupplier'])->name('suppliers.store');
         Route::get('/suppliers/{supplier}', [DeskController::class, 'showSupplier'])->name('suppliers.show');
         Route::put('/suppliers/{supplier}', [DeskController::class, 'updateSupplier'])->name('suppliers.update');
+        Route::post('/suppliers/{supplier}/restock', [DeskController::class, 'toggleSupplierRestock'])->name('suppliers.restock');
         Route::delete('/suppliers/{supplier}', [DeskController::class, 'destroySupplier'])->name('suppliers.destroy');
         Route::get('/promotions', [DeskController::class, 'promotions'])->name('promotions');
         Route::post('/promotions', [DeskController::class, 'storePromotion'])->name('promotions.store');
@@ -147,6 +162,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/financials/tax-filings/{filing}', [OfficeController::class, 'showTaxFiling'])->name('tax-filings.show');
         Route::post('/financials/tax-filings/{filing}/file', [OfficeController::class, 'fileTaxFiling'])->name('tax-filings.file');
         Route::get('/expenses', [OfficeController::class, 'expenses'])->name('expenses');
+        Route::get('/expenses/export', [OfficeController::class, 'exportExpenses'])->name('expenses.export');
         Route::post('/expenses', [OfficeController::class, 'storeExpense'])->name('expenses.store');
         Route::put('/expenses/{expense}', [OfficeController::class, 'updateExpense'])->name('expenses.update');
         Route::delete('/expenses/{expense}', [OfficeController::class, 'destroyExpense'])->name('expenses.destroy');
@@ -207,11 +223,17 @@ Route::middleware('auth')->group(function () {
         Route::middleware('super')->prefix('admin')->group(function () {
             Route::get('/', [PlatformController::class, 'home'])->name('admin.home');
             Route::get('/tenants', [PlatformController::class, 'tenants'])->name('admin.tenants');
-            Route::get('/tenants/{tenant}', [PlatformController::class, 'tenant'])->name('admin.tenants.show');
+            Route::get('/tenants/{tenant}', [PlatformController::class, 'tenant'])->name('admin.tenants.show')->withTrashed();
+            Route::post('/tenants/{tenant}/restore', [PlatformController::class, 'restoreTenant'])->name('admin.tenants.restore')->withTrashed();
+            Route::delete('/tenants/{tenant}/erase', [PlatformController::class, 'eraseTenant'])->name('admin.tenants.erase')->withTrashed();
             Route::post('/tenants/{tenant}', [PlatformController::class, 'updateTenant'])->name('admin.tenants.update');
             Route::post('/tenants/{tenant}/subscription', [PlatformController::class, 'overrideSubscription'])->name('admin.tenants.subscription');
             Route::delete('/tenants/{tenant}', [PlatformController::class, 'destroyTenant'])->name('admin.tenants.destroy');
             Route::delete('/tenants/{tenant}/users/{user}', [PlatformController::class, 'destroyUser'])->name('admin.tenants.users.destroy');
+            Route::post('/tenants/{tenant}/suppliers', [PlatformController::class, 'storeSupplier'])->name('admin.tenants.suppliers.store');
+            Route::put('/tenants/{tenant}/suppliers/{supplier}', [PlatformController::class, 'updateSupplier'])->name('admin.tenants.suppliers.update');
+            Route::delete('/tenants/{tenant}/suppliers/{supplier}', [PlatformController::class, 'destroySupplier'])->name('admin.tenants.suppliers.destroy');
+            Route::post('/tenants/{tenant}/suppliers/{supplier}/restore', [PlatformController::class, 'restoreSupplier'])->name('admin.tenants.suppliers.restore');
             Route::get('/subscriptions', [PlatformController::class, 'subscriptions'])->name('admin.subscriptions');
             Route::get('/billing', [PlatformController::class, 'billing'])->name('admin.billing');
             Route::post('/plans', [PlatformController::class, 'storePlan'])->name('admin.plans.store');
@@ -235,6 +257,10 @@ Route::middleware('auth')->group(function () {
             Route::get('/audit-logs', [PlatformController::class, 'auditLogs'])->name('admin.audit-logs');
             Route::get('/activity-logs', [PlatformController::class, 'activityLogs'])->name('admin.activity-logs');
             Route::get('/webhooks', [PlatformController::class, 'webhooks'])->name('admin.webhooks');
+            Route::get('/check-ins', [PlatformController::class, 'checkIns'])->name('admin.check-ins');
+            Route::get('/settings', [PlatformController::class, 'settings'])->name('admin.settings');
+            Route::post('/settings', [PlatformController::class, 'updateSettings'])->name('admin.settings.update');
+            Route::post('/settings/contact', [PlatformController::class, 'updateContact'])->name('admin.settings.contact');
             Route::get('/support', [AdminSupportController::class, 'index'])->name('admin.support');
             Route::get('/support/{ticket}', [AdminSupportController::class, 'show'])->name('admin.support.show');
             Route::post('/support/{ticket}/claim', [AdminSupportController::class, 'claim'])->name('admin.support.claim');

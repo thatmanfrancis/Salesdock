@@ -33,6 +33,7 @@ class PurchaseOrder extends Model
     {
         return [
             'totalCost' => 'decimal:2',
+            'isAutomatic' => 'boolean',
             'sentAt' => 'datetime',
             'receivedAt' => 'datetime',
             'createdAt' => 'datetime',

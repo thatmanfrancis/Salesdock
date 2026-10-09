@@ -3,9 +3,22 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Carbon;
 
 class Tenant extends Model
 {
+    use SoftDeletes;
+
+    /**
+     * Days a deleted shop can still be restored before it is erased for good.
+     */
+    public const RESTORE_DAYS = 30;
+
+    public const CLOSED_MESSAGE = 'This shop has been closed. Contact SalesDock support to restore it.';
+
+    public const DELETED_AT = 'deletedAt';
+
     protected $table = 'tenants';
 
     public static $snakeAttributes = false;
@@ -27,6 +40,11 @@ class Tenant extends Model
                 $model->{$model->getKeyName()} = (string) str()->ulid();
             }
         });
+    }
+
+    public function purgesAt(): ?Carbon
+    {
+        return $this->deletedAt?->copy()->addDays(self::RESTORE_DAYS);
     }
 
     public function users()
@@ -59,7 +77,10 @@ class Tenant extends Model
         return [
             'taxRate' => 'decimal:2',
             'isActive' => 'boolean',
+            'restockDrafts' => 'boolean',
             'approvedAt' => 'datetime',
+            'profileCompletedAt' => 'datetime',
+            'deletedAt' => 'datetime',
             'createdAt' => 'datetime',
             'updatedAt' => 'datetime',
         ];

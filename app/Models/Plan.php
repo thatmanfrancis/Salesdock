@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
 class Plan extends Model
@@ -27,6 +28,14 @@ class Plan extends Model
                 $model->{$model->getKeyName()} = (string) str()->ulid();
             }
         });
+    }
+
+    /**
+     * Plans a shop can buy. Zero-priced plans are never offered: every shop pays after its trial.
+     */
+    public function scopePurchasable(Builder $query): Builder
+    {
+        return $query->where('isActive', true)->where('monthlyPrice', '>', 0);
     }
 
     protected function casts(): array

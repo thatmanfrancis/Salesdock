@@ -49,7 +49,7 @@ class LoginController extends Controller
 
         if (! $user || ! $passwordMatches) {
             $registration = TenantRegistration::query()->whereRaw('lower(email) = ?', [$email])->first();
-            if ($registration && Password::check($data['password'], $registration->passwordHash)) {
+            if ($registration && (! $registration->emailVerified || Password::check($data['password'], $registration->passwordHash))) {
                 return $this->registrationHold($registration);
             }
 
@@ -58,6 +58,10 @@ class LoginController extends Controller
 
         if (! $user->isActive) {
             throw ValidationException::withMessages(['email' => 'This account is inactive. Ask the store owner to turn it back on.']);
+        }
+
+        if ($user->tenantId && ! $user->isSuperAdmin && Tenant::onlyTrashed()->whereKey($user->tenantId)->exists()) {
+            throw ValidationException::withMessages(['email' => Tenant::CLOSED_MESSAGE]);
         }
 
         if (! str_starts_with((string) $user->passwordHash, '$2y$')) {
@@ -76,8 +80,10 @@ class LoginController extends Controller
     private function registrationHold(TenantRegistration $registration)
     {
         if (! $registration->emailVerified) {
+            session()->flash('resend_email', $registration->email);
+
             throw ValidationException::withMessages([
-                'email' => 'Confirm the email we sent you first. Sign-in opens after the application is approved and a plan is chosen.',
+                'email' => 'Verify your email first. Open the link we sent to your inbox to set your password.',
             ]);
         }
 
@@ -101,7 +107,7 @@ class LoginController extends Controller
         }
 
         throw ValidationException::withMessages([
-            'email' => 'Your email is verified. The application is still in review, so sign-in opens after it is approved and you choose a plan.',
+            'email' => 'Your email is verified, but the account is still being set up. Contact support if this continues.',
         ]);
     }
 
@@ -131,9 +137,20 @@ class LoginController extends Controller
 
     private function completeLogin(Request $request, User $user)
     {
+        $lastSeenAt = $user->lastLoginAt;
         $user->forceFill(['lastLoginAt' => now()])->save();
         Auth::login($user);
         $request->session()->regenerate();
+
+        $daysAway = $lastSeenAt ? (int) floor($lastSeenAt->diffInDays(now(), true)) : 0;
+        if (! $user->isSuperAdmin && $daysAway >= 7) {
+            $request->session()->put('away_prompt', [
+                'days' => $daysAway,
+                'lastSeenAt' => $lastSeenAt->toIso8601String(),
+            ]);
+
+            return redirect()->route('welcome-back');
+        }
 
         return redirect()->intended($user->homePath());
     }

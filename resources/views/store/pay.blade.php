@@ -6,6 +6,9 @@
     <section class="sf-panel sf-pay">
         <h1>Pay ₦{{ number_format($order->netAmount, 2) }}</h1>
         <p class="muted">Order {{ $order->paymentRef }} · {{ $config->storeName }}</p>
+        @if ((float) $order->serviceCharge > 0)
+            <p class="muted">Includes ₦{{ number_format($order->serviceCharge, 2) }} service charge (1.5%).</p>
+        @endif
         @if ($publicKey)
             <button type="button" id="pay" class="sf-btn">Pay with Flutterwave</button>
         @else

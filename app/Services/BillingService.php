@@ -65,56 +65,6 @@ class BillingService
         return $subscription;
     }
 
-    public function activateFree(BillingInvoice $invoice, string $planId): Subscription
-    {
-        $tenant = Tenant::query()->findOrFail($invoice->tenantId);
-        $start = $invoice->periodStart ?? now();
-        $end = $invoice->periodEnd ?? $start->copy()->addMonth();
-        $paidAt = now();
-        $wasPaid = $invoice->status === 'PAID';
-
-        $subscription = Subscription::query()->updateOrCreate(
-            ['tenantId' => $tenant->id],
-            [
-                'planId' => $planId,
-                'status' => 'ACTIVE',
-                'billingCycle' => $invoice->billingCycle,
-                'currentPeriodStart' => $start,
-                'currentPeriodEnd' => $end,
-                'gracePeriodDays' => 7,
-                'gracePeriodEndsAt' => $end->copy()->addDays(7),
-                'lastRenewedAt' => $paidAt,
-                'nextBillingDate' => $end,
-                'cancelAtPeriodEnd' => false,
-                'cancelledAt' => null,
-                'cancellationReason' => null,
-            ]
-        );
-
-        $invoice->update([
-            'subscriptionId' => $subscription->id,
-            'status' => 'PAID',
-            'amount' => 0,
-            'paidAt' => $paidAt,
-            'gatewayRef' => $planId,
-        ]);
-
-        $this->markShopPaid($tenant);
-
-        if (! $wasPaid) {
-            $plan = \App\Models\Plan::query()->find($planId);
-            Notification::query()->create([
-                'tenantId' => $tenant->id,
-                'type' => 'SUBSCRIPTION_RENEWED',
-                'title' => 'Subscription Activated',
-                'message' => ($plan?->name ?: 'Your plan').' is active.',
-                'createdAt' => now(),
-            ]);
-        }
-
-        return $subscription;
-    }
-
     private function markShopPaid(Tenant $tenant): void
     {
         TenantRegistration::query()

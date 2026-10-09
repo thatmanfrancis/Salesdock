@@ -13,5 +13,10 @@
         <div class="space-y-5">
             {{ $slot }}
         </div>
+        <nav class="mt-8 flex flex-wrap justify-center gap-4 text-xs text-gray-400">
+            <a href="{{ route('help') }}" class="hover:underline">Help &amp; contact</a>
+            <a href="{{ route('privacy') }}" class="hover:underline">Privacy</a>
+            <a href="{{ route('terms') }}" class="hover:underline">Terms</a>
+        </nav>
     </div>
 </div>

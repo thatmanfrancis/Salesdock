@@ -3,60 +3,32 @@
 namespace App\Console\Commands;
 
 use App\Models\Notification;
-use App\Models\Plan;
 use App\Models\Subscription;
 use App\Models\User;
 use App\Support\AuthMail;
 use Illuminate\Console\Command;
-use Illuminate\Support\Carbon;
 
 class DowngradeSubscriptions extends Command
 {
     protected $signature = 'subscriptions:downgrade';
 
-    protected $description = 'Downgrade PAST_DUE subscriptions whose grace period has ended to the free/starter plan';
+    protected $description = 'Expire PAST_DUE subscriptions whose grace period has ended; the shop stays locked until a paid plan is chosen';
 
     public function handle(): int
     {
-        $now = now();
-
-        // Lowest-priced active plan = starter / free tier
-        $freePlan = Plan::query()
-            ->where('isActive', true)
-            ->orderBy('monthlyPrice')
-            ->first();
-
-        if (! $freePlan) {
-            $this->error('No active plans found. Cannot downgrade.');
-            return self::FAILURE;
-        }
-
         $subscriptions = Subscription::query()
             ->with('tenant')
             ->where('status', 'PAST_DUE')
-            ->where('gracePeriodEndsAt', '<', $now)
+            ->where('gracePeriodEndsAt', '<', now())
             ->get();
 
-        $downgraded = 0;
+        $expired = 0;
 
         foreach ($subscriptions as $sub) {
-            $wasOnPlan = $sub->planId;
-            $alreadyFree = $wasOnPlan === $freePlan->id;
-
-            // New period: 30 days from now on the free plan
-            $newStart = $now->copy();
-            $newEnd   = $now->copy()->addMonth();
-
             $sub->forceFill([
-                'status'             => 'ACTIVE',
-                'planId'             => $freePlan->id,
-                'billingCycle'       => 'MONTHLY',
-                'currentPeriodStart' => $newStart,
-                'currentPeriodEnd'   => $newEnd,
-                'gracePeriodEndsAt'  => $newEnd->copy()->addDays(7),
-                'lastRenewedAt'      => $now,
-                'nextBillingDate'    => $newEnd,
-                'cancelAtPeriodEnd'  => false,
+                'status' => 'EXPIRED',
+                'nextBillingDate' => null,
+                'cancelAtPeriodEnd' => false,
             ])->save();
 
             $tenant = $sub->tenant;
@@ -64,45 +36,39 @@ class DowngradeSubscriptions extends Command
                 continue;
             }
 
-            if (! $alreadyFree) {
-                // In-app notification
-                Notification::query()->create([
-                    'tenantId'  => $tenant->id,
-                    'type'      => 'SUBSCRIPTION_EXPIRED',
-                    'title'     => 'Moved to free plan',
-                    'message'   => 'Your grace period ended. Your account has been moved to the ' . $freePlan->name . ' plan. Upgrade anytime to restore full access.',
-                    'isRead'    => false,
-                    'createdAt' => now(),
+            Notification::query()->create([
+                'tenantId' => $tenant->id,
+                'type' => 'SUBSCRIPTION_EXPIRED',
+                'title' => 'Subscription ended',
+                'message' => 'Your grace period ended. Choose a plan to unlock your dashboard again. Your data is safe.',
+                'isRead' => false,
+                'createdAt' => now(),
+            ]);
+
+            $owner = User::query()
+                ->where('tenantId', $tenant->id)
+                ->whereHas('role', fn ($q) => $q->where('name', 'Owner'))
+                ->first();
+
+            if ($owner?->email) {
+                AuthMail::send($owner->email, $owner->name, 'Your SalesDock subscription has ended', [
+                    'preheader' => 'Choose a plan to unlock your dashboard again.',
+                    'heading' => 'Subscription ended',
+                    'kicker' => $tenant->name,
+                    'paragraphs' => [
+                        'Hi <strong style="color:#111827;">'.e($owner->name).'</strong>, the grace period for <strong>'.e($tenant->name).'</strong> has ended.',
+                        'The dashboard is locked until a plan is paid for. Your products, sales and customers are all kept safe, and everything comes back as soon as you renew.',
+                    ],
+                    'url' => route('billing'),
+                    'label' => 'Choose a plan',
                 ]);
-
-                // Email the owner
-                $owner = User::query()
-                    ->where('tenantId', $tenant->id)
-                    ->whereHas('role', fn ($q) => $q->where('name', 'Owner'))
-                    ->first();
-
-                if ($owner?->email) {
-                    AuthMail::send($owner->email, $owner->name, 'Your SalesDock account has been moved to the free plan', [
-                        'preheader'  => 'Upgrade anytime to restore full access.',
-                        'heading'    => 'Moved to free plan',
-                        'kicker'     => $tenant->name,
-                        'paragraphs' => [
-                            'Hi <strong style="color:#111827;">' . e($owner->name) . '</strong>, your grace period has ended.',
-                            'Your account for <strong>' . e($tenant->name) . '</strong> has been automatically moved to the <strong>' . e($freePlan->name) . '</strong> plan. Your data is safe and your store is still accessible — but some premium features have been restricted.',
-                            'You can upgrade to restore full access at any time from your billing page.',
-                        ],
-                        'url'        => route('billing'),
-                        'label'      => 'Upgrade now',
-                        'note'       => 'No action is required if you intended to use the free plan.',
-                    ]);
-                }
             }
 
-            $downgraded++;
-            $this->line('Downgraded to ' . $freePlan->name . ': ' . ($tenant->name ?? $sub->tenantId));
+            $expired++;
+            $this->line('Expired: '.$tenant->name);
         }
 
-        $this->info($downgraded . ' subscription(s) downgraded.');
+        $this->info($expired.' subscription(s) expired.');
 
         return self::SUCCESS;
     }

@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\ActivityLog;
 use App\Models\AuditLog;
 use App\Models\Customer;
+use App\Models\Hold;
 use App\Models\Notification;
 use App\Models\Order;
 use App\Models\OrderItem;
@@ -28,7 +29,7 @@ class SaleRecorder
 
         return DB::transaction(function () use ($tenantId, $lines, $meta) {
             if (! empty($meta['resumeHoldId'])) {
-                $held = \App\Models\Hold::query()->where('tenantId', $tenantId)->whereKey($meta['resumeHoldId'])->first();
+                $held = Hold::query()->where('tenantId', $tenantId)->whereKey($meta['resumeHoldId'])->first();
                 if ($held?->status === 'ACTIVE') {
                     $selling = (bool) ($meta['complete'] ?? true);
                     $this->releaseHold($held, 'RESTORED', $selling ? 'Brought back to the cart and sold' : 'Replaced by a new hold');
@@ -84,6 +85,8 @@ class SaleRecorder
 
             $discount = min($discount, $gross);
             $netAmount = max(0, $gross - $discount + ($inclusive ? 0 : $tax));
+            $serviceCharge = round($netAmount * max(0, (float) ($meta['serviceRate'] ?? 0)), 2);
+            $netAmount += $serviceCharge;
             $customer = $this->customer($tenantId, $meta, $complete ? $netAmount : 0);
 
             $order = Order::query()->create([
@@ -96,6 +99,7 @@ class SaleRecorder
                 'discountAmount' => $discount,
                 'taxAmount' => $tax,
                 'netAmount' => $netAmount,
+                'serviceCharge' => $serviceCharge,
                 'customerId' => $customer?->id,
                 'customerName' => $meta['customerName'] ?? $customer?->name,
                 'customerEmail' => $meta['customerEmail'] ?? $customer?->email,
@@ -155,7 +159,7 @@ class SaleRecorder
         });
     }
 
-    public function releaseHold(\App\Models\Hold $hold, string $status, string $reason): void
+    public function releaseHold(Hold $hold, string $status, string $reason): void
     {
         if ($hold->status !== 'ACTIVE') {
             return;
