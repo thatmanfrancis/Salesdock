@@ -530,11 +530,15 @@ class OfficeController extends MerchantController
 
         $tenantId = $this->tenantId();
         [$period, $start, $end, $prevStart, $prevEnd] = $this->analyticsWindow($request);
-        $current = $this->analyticsTotals($tenantId, $start, $end);
-        $previous = $this->analyticsTotals($tenantId, $prevStart, $prevEnd);
+        [$branchId, $branchNames] = $this->analyticsBranch($request, $tenantId);
+        $current = $this->analyticsTotals($tenantId, $start, $end, $branchId);
+        $previous = $this->analyticsTotals($tenantId, $prevStart, $prevEnd, $branchId);
         $gross = $current['gross'];
 
         return view('merchant.analytics', [
+            'branch' => $branchId ?? '',
+            'branchNames' => $branchNames,
+            'branchLabel' => $branchId ? $branchNames[$branchId] : null,
             'period' => $period,
             'periods' => [
                 '7' => 'Last 7 days',
@@ -546,7 +550,7 @@ class OfficeController extends MerchantController
             'from' => $start->copy()->timezone('Africa/Lagos')->toDateString(),
             'to' => $end->copy()->timezone('Africa/Lagos')->toDateString(),
             'range' => $start->copy()->timezone('Africa/Lagos')->format('d M').' – '.$end->copy()->timezone('Africa/Lagos')->format('d M Y'),
-            'filtered' => $period !== '30',
+            'filtered' => $period !== '30' || $branchId !== null,
             'kpis' => [
                 'gross' => $gross,
                 'cogs' => $current['cogs'],
@@ -560,11 +564,12 @@ class OfficeController extends MerchantController
                 'revenueGrowth' => $this->growth($gross, $previous['gross']),
                 'profitGrowth' => $this->growth($current['profit'], $previous['profit']),
             ],
-            'chart' => $this->analyticsChart($tenantId, $start, $end),
-            'channels' => $this->analyticsChannels($tenantId, $start, $end),
-            'dayparts' => $this->analyticsDayparts($tenantId, $start, $end),
+            'chart' => $this->analyticsChart($tenantId, $start, $end, $branchId),
+            'channels' => $this->analyticsChannels($tenantId, $start, $end, $branchId),
+            'dayparts' => $this->analyticsDayparts($tenantId, $start, $end, $branchId),
             'branches' => $this->analyticsBranches($tenantId, $start, $end),
-            'products' => $this->analyticsProducts($tenantId, $start, $end),
+            'staffRows' => $this->analyticsStaff($tenantId, $start, $end, $branchId),
+            'products' => $this->analyticsProducts($tenantId, $start, $end, $branchId),
         ]);
     }
 
@@ -574,17 +579,20 @@ class OfficeController extends MerchantController
 
         $tenantId = $this->tenantId();
         [$period, $start, $end, $prevStart, $prevEnd] = $this->analyticsWindow($request);
-        $current = $this->analyticsTotals($tenantId, $start, $end);
-        $previous = $this->analyticsTotals($tenantId, $prevStart, $prevEnd);
+        [$branchId, $branchNames] = $this->analyticsBranch($request, $tenantId);
+        $current = $this->analyticsTotals($tenantId, $start, $end, $branchId);
+        $previous = $this->analyticsTotals($tenantId, $prevStart, $prevEnd, $branchId);
         $gross = $current['gross'];
 
         return view('merchant.analytics-report', $this->reportBrand([
-            'title' => 'Analytics report',
+            'title' => $branchId ? 'Analytics report · '.$branchNames[$branchId] : 'Analytics report',
             'range' => $start->copy()->timezone('Africa/Lagos')->format('d M Y').' – '.$end->copy()->timezone('Africa/Lagos')->format('d M Y'),
             'backUrl' => route('analytics', $request->query()),
+            'branchLabel' => $branchId ? $branchNames[$branchId] : null,
             'fingerprint' => implode('|', [
                 'analytics',
                 $period,
+                $branchId ?? 'all',
                 $start->toIso8601String(),
                 $end->toIso8601String(),
                 (string) $gross,
@@ -603,10 +611,11 @@ class OfficeController extends MerchantController
                 'revenueGrowth' => $this->growth($gross, $previous['gross']),
                 'profitGrowth' => $this->growth($current['profit'], $previous['profit']),
             ],
-            'channels' => $this->analyticsChannels($tenantId, $start, $end),
-            'dayparts' => $this->analyticsDayparts($tenantId, $start, $end),
+            'channels' => $this->analyticsChannels($tenantId, $start, $end, $branchId),
+            'dayparts' => $this->analyticsDayparts($tenantId, $start, $end, $branchId),
             'branches' => $this->analyticsBranches($tenantId, $start, $end),
-            'products' => $this->analyticsProducts($tenantId, $start, $end),
+            'staffRows' => $this->analyticsStaff($tenantId, $start, $end, $branchId),
+            'products' => $this->analyticsProducts($tenantId, $start, $end, $branchId),
             'period' => $period,
         ]));
     }
@@ -2318,11 +2327,28 @@ class OfficeController extends MerchantController
         return [$period, $start->copy()->utc(), $end->copy()->utc(), $prevStart->utc(), $prevEnd->utc()];
     }
 
-    private function analyticsTotals(string $tenantId, Carbon $start, Carbon $end): array
+    /**
+     * @return array{0: ?string, 1: \Illuminate\Support\Collection<string, string>}
+     */
+    private function analyticsBranch(Request $request, string $tenantId): array
     {
-        $row = SalesLedger::query()
+        $branches = Branch::query()->where('tenantId', $tenantId)->orderByDesc('isMain')->orderBy('name')->pluck('name', 'id');
+        $branchId = (string) $request->query('branch', '');
+
+        return [$branches->has($branchId) ? $branchId : null, $branches];
+    }
+
+    private function ledgerWindow(string $tenantId, Carbon $start, Carbon $end, ?string $branchId = null): Builder
+    {
+        return SalesLedger::query()
             ->where('tenantId', $tenantId)
             ->whereBetween('createdAt', [$start, $end])
+            ->when($branchId, fn ($query) => $query->whereIn('orderId', Order::query()->select('id')->where('tenantId', $tenantId)->where('branchId', $branchId)));
+    }
+
+    private function analyticsTotals(string $tenantId, Carbon $start, Carbon $end, ?string $branchId = null): array
+    {
+        $row = $this->ledgerWindow($tenantId, $start, $end, $branchId)
             ->toBase()
             ->selectRaw('coalesce(sum("grossRevenue"), 0) as gross, coalesce(sum("totalCogs"), 0) as cogs, coalesce(sum("totalVat"), 0) as vat, coalesce(sum("grossProfit"), 0) as profit, coalesce(sum("netRevenue"), 0) as net, count(*) as orders')
             ->first();
@@ -2346,11 +2372,9 @@ class OfficeController extends MerchantController
         return round((($current - $previous) / $previous) * 100, 1);
     }
 
-    private function analyticsChart(string $tenantId, Carbon $start, Carbon $end): array
+    private function analyticsChart(string $tenantId, Carbon $start, Carbon $end, ?string $branchId = null): array
     {
-        $rows = SalesLedger::query()
-            ->where('tenantId', $tenantId)
-            ->whereBetween('createdAt', [$start, $end])
+        $rows = $this->ledgerWindow($tenantId, $start, $end, $branchId)
             ->toBase()
             ->selectRaw("to_char((\"createdAt\" AT TIME ZONE 'UTC') AT TIME ZONE 'Africa/Lagos', 'YYYY-MM-DD') as day, coalesce(sum(\"grossRevenue\"), 0) as revenue")
             ->groupByRaw("to_char((\"createdAt\" AT TIME ZONE 'UTC') AT TIME ZONE 'Africa/Lagos', 'YYYY-MM-DD')")
@@ -2382,12 +2406,10 @@ class OfficeController extends MerchantController
         ];
     }
 
-    private function analyticsChannels(string $tenantId, Carbon $start, Carbon $end): array
+    private function analyticsChannels(string $tenantId, Carbon $start, Carbon $end, ?string $branchId = null): array
     {
         $labels = ['POS' => 'POS', 'ONLINE' => 'Online', 'WHATSAPP' => 'WhatsApp', 'INSTAGRAM' => 'Instagram', 'LINK' => 'Link'];
-        $rows = SalesLedger::query()
-            ->where('tenantId', $tenantId)
-            ->whereBetween('createdAt', [$start, $end])
+        $rows = $this->ledgerWindow($tenantId, $start, $end, $branchId)
             ->toBase()
             ->selectRaw('channel, coalesce(sum("grossRevenue"), 0) as revenue')
             ->groupBy('channel')
@@ -2401,11 +2423,9 @@ class OfficeController extends MerchantController
         ])->values()->all();
     }
 
-    private function analyticsDayparts(string $tenantId, Carbon $start, Carbon $end): array
+    private function analyticsDayparts(string $tenantId, Carbon $start, Carbon $end, ?string $branchId = null): array
     {
-        $rows = SalesLedger::query()
-            ->where('tenantId', $tenantId)
-            ->whereBetween('createdAt', [$start, $end])
+        $rows = $this->ledgerWindow($tenantId, $start, $end, $branchId)
             ->toBase()
             ->selectRaw("extract(hour from (\"createdAt\" AT TIME ZONE 'UTC') AT TIME ZONE 'Africa/Lagos') as hour, coalesce(sum(\"grossRevenue\"), 0) as revenue")
             ->groupByRaw("extract(hour from (\"createdAt\" AT TIME ZONE 'UTC') AT TIME ZONE 'Africa/Lagos')")
@@ -2435,15 +2455,80 @@ class OfficeController extends MerchantController
         $total = max(1, (float) collect($rows)->sum('revenue'));
 
         return collect($rows)->map(fn ($row) => [
+            'id' => $row->branch,
             'label' => $row->branch ? ($names[$row->branch] ?? 'Branch') : 'Unassigned',
             'amount' => (float) $row->revenue,
             'width' => round(((float) $row->revenue / $total) * 100, 1),
         ])->all();
     }
 
-    private function analyticsProducts(string $tenantId, Carbon $start, Carbon $end): array
+    /**
+     * Sales, voids, discounts and refunds per person who rang up the sale.
+     *
+     * @return list<array{name: string, role: ?string, branch: ?string, active: bool, orders: int, revenue: float, aov: float, discounts: float, voids: int, refunds: int, refunded: float, width: float}>
+     */
+    private function analyticsStaff(string $tenantId, Carbon $start, Carbon $end, ?string $branchId = null): array
     {
-        $rows = DB::select('select i."productName" as name, i.sku, coalesce(sum(i."lineTotal"), 0) as revenue, coalesce(sum(i.quantity), 0) as qty, coalesce(sum(i."grossProfit"), 0) as profit, coalesce(sum(i."costPrice" * i.quantity), 0) as cogs from sales_ledger_items i inner join sales_ledger l on l.id = i."ledgerId" where l."tenantId" = ? and l."createdAt" >= ? and l."createdAt" <= ? group by i."productName", i.sku order by revenue desc limit 10', [$tenantId, $start->toDateTimeString(), $end->toDateTimeString()]);
+        $window = [$tenantId, $start->toDateTimeString(), $end->toDateTimeString()];
+        $branchSql = $branchId ? ' and o."branchId" = ?' : '';
+        $bindings = $branchId ? [...$window, $branchId] : $window;
+
+        $sales = collect(DB::select('select l."cashierId" as cashier, count(*) as orders, coalesce(sum(l."grossRevenue"), 0) as revenue, coalesce(sum(o."discountAmount"), 0) as discounts from sales_ledger l left join orders o on o.id = l."orderId" where l."tenantId" = ? and l."createdAt" >= ? and l."createdAt" <= ?'.$branchSql.' group by l."cashierId"', $bindings))
+            ->keyBy(fn ($row) => (string) $row->cashier);
+        $voids = collect(DB::select('select o."cashierId" as cashier, count(*) as voids from orders o where o."tenantId" = ? and o."cancelledAt" >= ? and o."cancelledAt" <= ? and o."cancelReason" like \'VOID:%\''.$branchSql.' group by o."cashierId"', $bindings))
+            ->keyBy(fn ($row) => (string) $row->cashier);
+        $refunds = collect(DB::select('select o."cashierId" as cashier, count(*) as refunds, coalesce(sum(r.amount), 0) as refunded from refunds r inner join orders o on o.id = r."orderId" where r."tenantId" = ? and r."createdAt" >= ? and r."createdAt" <= ? and r.status in (\'APPROVED\', \'PROCESSED\')'.$branchSql.' group by o."cashierId"', $bindings))
+            ->keyBy(fn ($row) => (string) $row->cashier);
+
+        $people = User::query()
+            ->with(['role', 'branch'])
+            ->where('tenantId', $tenantId)
+            ->where(function ($query) use ($sales, $voids, $refunds, $branchId) {
+                $query->whereIn('id', $sales->keys()->merge($voids->keys())->merge($refunds->keys())->filter()->unique()->values())
+                    ->orWhere(fn ($staff) => $staff->where('isActive', true)
+                        ->whereHas('role', fn ($role) => $role->where('role', 'CASHIER'))
+                        ->when($branchId, fn ($inBranch) => $inBranch->where('branchId', $branchId)));
+            })
+            ->get()
+            ->keyBy('id');
+
+        $keys = $people->keys()->map(fn ($id) => (string) $id);
+        if ($sales->has('') || $voids->has('') || $refunds->has('')) {
+            $keys->push('');
+        }
+        $total = max(1, (float) $sales->sum('revenue'));
+
+        return $keys->map(function (string $key) use ($people, $sales, $voids, $refunds, $total) {
+            $person = $people->get($key);
+            $orders = (int) ($sales[$key]->orders ?? 0);
+            $revenue = (float) ($sales[$key]->revenue ?? 0);
+
+            return [
+                'name' => $person?->name ?? 'Online store (no cashier)',
+                'role' => $person?->role?->name,
+                'branch' => $person?->branch?->name,
+                'active' => (bool) ($person?->isActive ?? true),
+                'orders' => $orders,
+                'revenue' => $revenue,
+                'aov' => $orders > 0 ? $revenue / $orders : 0,
+                'discounts' => (float) ($sales[$key]->discounts ?? 0),
+                'voids' => (int) ($voids[$key]->voids ?? 0),
+                'refunds' => (int) ($refunds[$key]->refunds ?? 0),
+                'refunded' => (float) ($refunds[$key]->refunded ?? 0),
+                'width' => round(($revenue / $total) * 100, 1),
+            ];
+        })->sortByDesc('revenue')->values()->all();
+    }
+
+    private function analyticsProducts(string $tenantId, Carbon $start, Carbon $end, ?string $branchId = null): array
+    {
+        $bindings = [$tenantId, $start->toDateTimeString(), $end->toDateTimeString()];
+        $branchSql = '';
+        if ($branchId) {
+            $branchSql = ' and l."orderId" in (select o.id from orders o where o."tenantId" = ? and o."branchId" = ?)';
+            array_push($bindings, $tenantId, $branchId);
+        }
+        $rows = DB::select('select i."productName" as name, i.sku, coalesce(sum(i."lineTotal"), 0) as revenue, coalesce(sum(i.quantity), 0) as qty, coalesce(sum(i."grossProfit"), 0) as profit, coalesce(sum(i."costPrice" * i.quantity), 0) as cogs from sales_ledger_items i inner join sales_ledger l on l.id = i."ledgerId" where l."tenantId" = ? and l."createdAt" >= ? and l."createdAt" <= ?'.$branchSql.' group by i."productName", i.sku order by revenue desc limit 10', $bindings);
 
         return collect($rows)->map(function ($row) {
             $revenue = (float) $row->revenue;

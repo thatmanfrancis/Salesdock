@@ -12,7 +12,6 @@ use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\SalesLedger;
 use App\Models\SalesLedgerItem;
-use App\Models\StockMovement;
 use App\Models\Transaction;
 use App\Models\VatSettings;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +20,8 @@ use Illuminate\Validation\ValidationException;
 
 class SaleRecorder
 {
+    public function __construct(private BranchInventory $stock) {}
+
     public function sell(string $tenantId, array $lines, array $meta): Order
     {
         if ($lines === []) {
@@ -57,6 +58,12 @@ class SaleRecorder
                 $free = (int) $product->currentStock - (int) $product->reservedQty;
                 if ($free < $qty) {
                     throw ValidationException::withMessages(['cart' => "{$product->name} only has {$free} available."]);
+                }
+                if (! empty($meta['branchId'])) {
+                    $atBranch = $this->stock->quantityAt($product, $meta['branchId']);
+                    if ($atBranch < $qty) {
+                        throw ValidationException::withMessages(['cart' => "{$product->name} only has {$atBranch} at this branch."]);
+                    }
                 }
                 if (! $complete) {
                     $product->forceFill(['reservedQty' => (int) $product->reservedQty + $qty])->save();
@@ -123,19 +130,7 @@ class SaleRecorder
                 ]);
 
                 if ($complete) {
-                    $before = (int) $row['product']->currentStock;
-                    $after = $before - $row['qty'];
-                    $row['product']->forceFill(['currentStock' => $after])->save();
-                    StockMovement::query()->create([
-                        'productId' => $row['product']->id,
-                        'tenantId' => $tenantId,
-                        'type' => 'SALE',
-                        'quantity' => -$row['qty'],
-                        'beforeQty' => $before,
-                        'afterQty' => $after,
-                        'reference' => $order->id,
-                        'createdAt' => now(),
-                    ]);
+                    $this->stock->take($row['product'], $row['qty'], $order->branchId, 'SALE', ['reference' => $order->id]);
                 }
             }
 
@@ -214,19 +209,7 @@ class SaleRecorder
 
             foreach ($items as $item) {
                 $product = Product::query()->where('tenantId', $order->tenantId)->lockForUpdate()->findOrFail($item->productId);
-                $before = (int) $product->currentStock;
-                $after = $before - (int) $item->quantity;
-                $product->forceFill(['currentStock' => $after])->save();
-                StockMovement::query()->create([
-                    'productId' => $product->id,
-                    'tenantId' => $order->tenantId,
-                    'type' => 'SALE',
-                    'quantity' => -((int) $item->quantity),
-                    'beforeQty' => $before,
-                    'afterQty' => $after,
-                    'reference' => $order->id,
-                    'createdAt' => now(),
-                ]);
+                $this->stock->take($product, (int) $item->quantity, $order->branchId, 'SALE', ['reference' => $order->id]);
                 $cogs += (float) $product->costPrice * (int) $item->quantity;
                 $prepared[] = [
                     'product' => $product,

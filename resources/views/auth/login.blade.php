@@ -88,24 +88,33 @@
                         </label>
                         <a href="{{ route('password.request') }}" class="text-sm font-semibold text-gray-500">Forgot password?</a>
                     </div>
-                    <x-auth.submit label="Login" loading="Logging in..." disabled />
                 </div>
 
                 <div class="pin-panel hidden space-y-5">
                     <x-auth.password label="PIN" name="pin" placeholder="Enter your PIN" minlength="4" maxlength="6" inputmode="numeric" required />
+                </div>
+
+                <x-turnstile action="login" />
+
+                <div class="password-panel">
+                    <x-auth.submit label="Login" loading="Logging in..." disabled />
+                </div>
+                <div class="pin-panel hidden">
                     <x-auth.submit label="Login with PIN" loading="Logging in..." disabled />
                 </div>
             </form>
             <script>
                 const form = document.getElementById('login-form');
-                const passwordPanel = form.querySelector('.password-panel');
-                const pinPanel = form.querySelector('.pin-panel');
                 function showTab() {
                     const pin = form.querySelector('[name="method"][value="pin"]').checked;
-                    passwordPanel.classList.toggle('hidden', pin);
-                    pinPanel.classList.toggle('hidden', !pin);
-                    passwordPanel.querySelectorAll('input, button').forEach((input) => { input.disabled = pin; });
-                    pinPanel.querySelectorAll('input, button').forEach((input) => { input.disabled = !pin; });
+                    form.querySelectorAll('.password-panel').forEach((panel) => {
+                        panel.classList.toggle('hidden', pin);
+                        panel.querySelectorAll('input, button').forEach((input) => { input.disabled = pin; });
+                    });
+                    form.querySelectorAll('.pin-panel').forEach((panel) => {
+                        panel.classList.toggle('hidden', !pin);
+                        panel.querySelectorAll('input, button').forEach((input) => { input.disabled = !pin; });
+                    });
                     window.salesdockGate?.(form);
                 }
                 form.querySelectorAll('[name="method"]').forEach((input) => input.addEventListener('change', showTab));

@@ -42,6 +42,7 @@
             const other = form.querySelector('[name="' + confirm.name.replace('_confirmation', '') + '"]');
             if (!other || confirm.value === '' || confirm.value !== other.value) ready = false;
         }
+        if (form.querySelector('.cf-turnstile') && !form.querySelector('[name="cf-turnstile-response"]')?.value) ready = false;
         const names = new Set([...form.querySelectorAll('input[type="radio"][required]')].map((field) => field.name));
         names.forEach((name) => {
             if (![...form.querySelectorAll('[name="' + name + '"]')].some((field) => field.checked)) ready = false;

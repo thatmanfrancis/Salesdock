@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Models\AuditLog;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
 
 class Approval
@@ -24,6 +25,14 @@ class Approval
         $data = $request->validate([
             'pin' => ['required', 'digits_between:4,6'],
         ]);
+
+        $lockKey = 'supervisor-pin-fail:'.$tenantId.'|'.($request->user()?->id ?: $request->ip());
+        if (RateLimiter::tooManyAttempts($lockKey, 5)) {
+            $minutes = (int) ceil(RateLimiter::availableIn($lockKey) / 60);
+            throw ValidationException::withMessages([
+                'pin' => "Too many wrong supervisor PINs. Try again in {$minutes} minute".($minutes === 1 ? '' : 's').'.',
+            ]);
+        }
 
         $approver = User::query()
             ->with('role')
@@ -45,10 +54,14 @@ class Approval
             });
 
         if (! $approver) {
+            RateLimiter::hit($lockKey, 900);
+
             throw ValidationException::withMessages([
                 'pin' => 'That PIN is not a supervisor, manager, or owner for this shop.',
             ]);
         }
+
+        RateLimiter::clear($lockKey);
 
         return $approver;
     }

@@ -40,4 +40,11 @@ return [
         'widget_id'   => env('TAWK_WIDGET_ID', 'default'),
     ],
 
+    'turnstile' => [
+        'site_key'  => env('TURNSTILE_SITE_KEY'),
+        'secret'    => env('TURNSTILE_SECRET'),
+        // Comma-separated frontend hostnames siteverify must report, e.g. "salesdock.ng,www.salesdock.ng". Never include localhost in production.
+        'hostnames' => env('TURNSTILE_HOSTNAMES'),
+    ],
+
 ];

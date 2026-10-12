@@ -17,6 +17,9 @@
                 <a href="{{ route('store.cart', $tenant->slug) }}">Back to cart</a>
             </header>
 
+            @if ($errors->any())
+                <p class="sf-flash error" role="alert">{{ $errors->first() }}</p>
+            @endif
             <form method="post" action="{{ route('store.checkout.store', $tenant->slug) }}" class="sf-form" id="checkout-form">
                 @csrf
                 <label>
@@ -47,7 +50,8 @@
                         Transfer to {{ $config->accountName }} · {{ $config->bankName }} · {{ $config->bankAccount }}
                     </p>
                 @endif
-                <button type="submit" class="sf-btn" id="place-btn">
+                <x-turnstile action="checkout" />
+                <button type="submit" class="sf-btn" id="place-btn" data-captcha-submit @disabled(\App\Support\Turnstile::needsChallenge())>
                     Place order · <span id="btn-amount">₦{{ number_format($displayTotal, 2) }}</span>
                 </button>
             </form>

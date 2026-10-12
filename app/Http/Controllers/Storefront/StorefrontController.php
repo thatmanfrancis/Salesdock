@@ -11,6 +11,7 @@ use App\Models\Tenant;
 use App\Services\Flutterwave;
 use App\Services\SaleRecorder;
 use App\Services\StoreCart;
+use App\Support\Turnstile;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -204,6 +205,7 @@ class StorefrontController extends Controller
     public function checkout(Request $request, string $slug, SaleRecorder $sales, Flutterwave $flutterwave)
     {
         [$tenant, $config] = $this->store($slug);
+        Turnstile::verify($request, 'checkout');
         $data = $request->validate([
             'customerName' => ['required', 'string', 'max:255'],
             'customerEmail' => ['required', 'email'],

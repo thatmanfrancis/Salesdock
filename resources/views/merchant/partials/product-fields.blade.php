@@ -42,7 +42,14 @@
             <label>Wholesale price <input type="number" name="wholesalePrice" step="0.01" min="0" value="{{ old('wholesalePrice', $product->wholesalePrice ?? '') }}"></label>
         @endif
         <label>VAT override % <input type="number" name="vatRateOverride" step="0.01" min="0" value="{{ old('vatRateOverride', $product->vatRateOverride ?? '') }}"></label>
-        @if ($stock ?? true)
+        @if (($stock ?? true) && ! empty($branches))
+            <fieldset class="wide branch-stock">
+                <legend>Opening stock per branch</legend>
+                @foreach ($branches as $branchId => $branchName)
+                    <label>{{ $branchName }} <input type="number" name="branchStock[{{ $branchId }}]" min="0" value="{{ old('branchStock.'.$branchId, 0) }}"></label>
+                @endforeach
+            </fieldset>
+        @elseif ($stock ?? true)
             <label>Stock <input type="number" name="currentStock" min="0" value="{{ old('currentStock', $product->currentStock ?? 0) }}"></label>
         @endif
         <label>Low-stock threshold <input type="number" name="minThreshold" min="0" value="{{ old('minThreshold', $product->minThreshold ?? 5) }}"></label>

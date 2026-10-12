@@ -15,6 +15,7 @@
             <form method="post" action="{{ route('password.email') }}" class="space-y-5" autocomplete="off" data-gate>
                 @csrf
                 <x-auth.field label="Email" name="email" type="text" :value="old('email')" placeholder="you@business.com" inputmode="email" required />
+                <x-turnstile action="forgot-password" />
                 <x-auth.submit label="Send Reset Link" loading="Sending…" disabled />
             </form>
             <a href="{{ route('login') }}" class="text-sm font-medium text-green-600">← Back to login</a>

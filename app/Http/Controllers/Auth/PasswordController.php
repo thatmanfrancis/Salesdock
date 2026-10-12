@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\PasswordResetToken;
 use App\Models\User;
 use App\Support\AuthMail;
+use App\Support\Turnstile;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -19,6 +20,8 @@ class PasswordController extends Controller
 
     public function send(Request $request)
     {
+        Turnstile::verify($request, 'forgot-password');
+
         $data = $request->validate(['email' => ['required', 'email']]);
         $email = strtolower(trim($data['email']));
         $user = User::query()->whereRaw('lower(email) = ?', [$email])->first();
@@ -61,6 +64,8 @@ class PasswordController extends Controller
 
     public function reset(Request $request)
     {
+        Turnstile::verify($request, 'reset-password');
+
         $data = $request->validate([
             'token' => ['required', 'string'],
             'password' => ['required', 'string', 'min:8', 'confirmed'],

@@ -28,6 +28,11 @@
             @else
                 <form method="post" action="{{ route('products.starter.import') }}" id="starter-form">
                     @csrf
+                    @if ($branches !== [])
+                        <div class="branch-pick">
+                            <x-ui.select name="branchId" label="Stock goes to" :value="array_key_first($branches)" :options="$branches" />
+                        </div>
+                    @endif
 
                     {{-- Group by category --}}
                     @php $grouped = $items->groupBy('category'); @endphp

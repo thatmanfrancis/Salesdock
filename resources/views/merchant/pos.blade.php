@@ -38,7 +38,12 @@
             @endif
             <div class="pos-grid @if ($products->isEmpty()) is-empty @endif" id="pos-grid">
                 @forelse ($products as $product)
-                    @php $available = (int) $product->currentStock - (int) $product->reservedQty; @endphp
+                    @php
+                        $available = (int) $product->currentStock - (int) $product->reservedQty;
+                        if ($branchStock !== null) {
+                            $available = min($available, (int) ($branchStock[$product->id] ?? 0));
+                        }
+                    @endphp
                     <button
                         type="button"
                         class="pos-product"

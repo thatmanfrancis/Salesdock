@@ -59,7 +59,44 @@
         </ul>
     @endif
 
-    <h2>Top products</h2>
+    <h2>Staff performance{{ $branchLabel ? ' · '.$branchLabel : '' }}</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Staff</th>
+                <th>Branch</th>
+                <th class="num">Sales</th>
+                <th class="num">Orders</th>
+                <th class="num">Avg basket</th>
+                <th class="num">Discounts</th>
+                <th class="num">Voids</th>
+                <th class="num">Refunds</th>
+            </tr>
+        </thead>
+        <tbody>
+            @forelse ($staffRows as $row)
+                <tr>
+                    <td>
+                        {{ $row['name'] }}
+                        @if ($row['role'])
+                            <span class="muted">· {{ $row['role'] }}</span>
+                        @endif
+                    </td>
+                    <td>{{ $row['branch'] ?? '—' }}</td>
+                    <td class="num">{{ $money($row['revenue']) }}</td>
+                    <td class="num">{{ number_format($row['orders']) }}</td>
+                    <td class="num">{{ $money($row['aov']) }}</td>
+                    <td class="num">{{ $money($row['discounts']) }}</td>
+                    <td class="num">{{ $row['voids'] }}</td>
+                    <td class="num">{{ $row['refunds'] }} · {{ $money($row['refunded']) }}</td>
+                </tr>
+            @empty
+                <tr><td colspan="8">No staff sales in this range.</td></tr>
+            @endforelse
+        </tbody>
+    </table>
+
+    <h2>Top products{{ $branchLabel ? ' · '.$branchLabel : '' }}</h2>
     <table>
         <thead>
             <tr>

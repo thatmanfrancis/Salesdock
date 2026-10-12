@@ -15,6 +15,7 @@ class ProductCsv
         'currentStock' => ['currentstock', 'current stock', 'stock', 'qty', 'quantity', 'opening stock', 'inventory', 'on hand', 'units'],
         'minThreshold' => ['minthreshold', 'min threshold', 'low stock threshold', 'threshold', 'min'],
         'expiresAt' => ['expiresat', 'expires at', 'expiry', 'expiry date', 'expiration date'],
+        'branch' => ['branch', 'branch name', 'outlet', 'location', 'store'],
     ];
 
     public static function parse(string $text): array
@@ -77,7 +78,7 @@ class ProductCsv
             $lines[] = $current;
         }
 
-        return array_values(array_filter(array_map(fn ($line) => str_getcsv($line), $lines), fn ($line) => $line !== [null]));
+        return array_values(array_filter(array_map(fn ($line) => str_getcsv($line, ',', '"', '\\'), $lines), fn ($line) => $line !== [null]));
     }
 
     private static function key(string $value): string

@@ -12,6 +12,7 @@
             <input type="hidden" name="token" value="{{ $token }}">
             <x-auth.password label="New Password" name="password" placeholder="Min. 8 characters" minlength="8" required />
             <x-auth.password label="Confirm Password" name="password_confirmation" placeholder="Repeat password" minlength="8" required />
+            <x-turnstile action="reset-password" />
             <x-auth.submit label="Reset Password" loading="Saving…" disabled />
         </form>
         <a href="{{ route('login') }}" class="text-sm font-medium text-green-600">← Back to login</a>

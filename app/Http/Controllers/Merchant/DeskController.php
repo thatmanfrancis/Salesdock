@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Merchant;
 
+use App\Models\Branch;
 use App\Models\CatalogueProduct;
 use App\Models\Customer;
 use App\Models\Hold;
@@ -25,6 +26,7 @@ use App\Models\TenantRegistration;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Models\VatSettings;
+use App\Services\BranchInventory;
 use App\Services\SaleRecorder;
 use App\Services\SupplierMessenger;
 use App\Support\Approval;
@@ -106,16 +108,20 @@ class DeskController extends MerchantController
         ]);
     }
 
-    public function pos()
+    public function pos(BranchInventory $stock)
     {
         $tenantId = $this->tenantId();
 
         $holds = Hold::query()->where('tenantId', $tenantId)->where('status', 'ACTIVE')->when($this->cashierOnly(), fn ($query) => $query->where('cashierId', $this->user()->id))->latest()->limit(12)->get();
         $items = OrderItem::query()->whereIn('orderId', $holds->pluck('orderId'))->get()->groupBy('orderId');
         $vat = VatSettings::query()->where('tenantId', $tenantId)->first();
+        $products = Product::query()->where('tenantId', $tenantId)->where('isActive', true)->orderBy('name')->get();
+        $branches = $stock->branches($tenantId);
+        $branchId = $stock->resolveBranch($tenantId, $this->user()->branchId);
 
         return view('merchant.pos', [
-            'products' => Product::query()->where('tenantId', $tenantId)->where('isActive', true)->orderBy('name')->get(),
+            'products' => $products,
+            'branchStock' => $branches->count() > 1 && $branchId ? $stock->quantitiesAt($tenantId, $branchId, $products->pluck('id')->all()) : null,
             'holds' => $holds->map(fn ($hold) => [
                 'id' => $hold->id,
                 'reference' => $hold->reference ?: 'Unnamed hold',
@@ -131,7 +137,7 @@ class DeskController extends MerchantController
         ]);
     }
 
-    public function sell(Request $request, SaleRecorder $sales)
+    public function sell(Request $request, SaleRecorder $sales, BranchInventory $stock)
     {
         $data = $request->validate([
             'qty' => ['required', 'array'],
@@ -158,7 +164,7 @@ class DeskController extends MerchantController
 
         $hold = $request->filled('hold_label');
         $order = $sales->sell($this->tenantId(), $lines, [
-            'branchId' => $this->user()->branchId,
+            'branchId' => $stock->resolveBranch($this->tenantId(), $this->user()->branchId),
             'cashierId' => $this->user()->id,
             'channel' => 'POS',
             'method' => $data['method'],
@@ -312,6 +318,7 @@ class DeskController extends MerchantController
             'full' => $used >= $limit,
             'costs' => $this->seesCosts(),
             'suppliers' => Supplier::query()->where('tenantId', $tenantId)->orderBy('name')->pluck('name', 'id'),
+            'branches' => $this->branchChoices($tenantId),
             'panel' => (string) $request->query('panel', ''),
             'catalogueCat' => $catalogueCat,
             'catalogueCategories' => $catalogueCategories,
@@ -359,12 +366,14 @@ class DeskController extends MerchantController
             'rows.*.currentStock' => ['nullable', 'integer', 'min:0'],
             'rows.*.category' => ['nullable', 'string', 'max:120'],
         ])['rows'];
+        $branchId = $this->pickedBranch($request);
 
         [$saved, $skipped] = $this->saveMany(collect($rows)->filter(fn ($row) => trim((string) ($row['name'] ?? '')) !== '')->map(fn ($row) => [
             'name' => $row['name'],
             'sku' => $row['sku'] ?: $this->skuFromName($row['name']),
             'price' => $row['price'] ?? 0,
             'currentStock' => $row['currentStock'] ?? 0,
+            'branchId' => $branchId,
             'category' => $row['category'] ?: 'General',
             'availabilityMode' => 'BOTH',
         ])->values()->all());
@@ -385,6 +394,11 @@ class DeskController extends MerchantController
         }
         array_push($columns, 'stock', 'min threshold', 'expiry');
         array_push($sample, '40', '5', '');
+        $branches = $this->branchStock()->branches($this->tenantId());
+        if ($branches->count() > 1) {
+            $columns[] = 'branch';
+            $sample[] = '"'.str_replace('"', '""', (string) $branches->first()->name).'"';
+        }
         $csv = implode(',', $columns)."\n".implode(',', $sample)."\n";
 
         return response($csv, 200, [
@@ -400,7 +414,10 @@ class DeskController extends MerchantController
             'file' => ['required', 'file', 'extensions:csv', 'max:2048'],
         ])['file'];
         $parsed = ProductCsv::parse($file->get());
+        $pickedBranch = $this->pickedBranch($request);
+        $branchesByName = Branch::query()->where('tenantId', $this->tenantId())->pluck('id', 'name')->mapWithKeys(fn ($id, $name) => [mb_strtolower(trim($name)) => $id]);
         [$saved, $skipped] = $this->saveMany(collect($parsed)->filter(fn ($row) => ($row['name'] ?? '') !== '')->map(fn ($row) => [
+            'branchId' => $branchesByName[mb_strtolower(trim((string) ($row['branch'] ?? '')))] ?? $pickedBranch,
             'name' => $row['name'],
             'sku' => $row['sku'] ?: $this->skuFromName($row['name']),
             'barcode' => $row['barcode'],
@@ -437,6 +454,7 @@ class DeskController extends MerchantController
             'description' => $item->description,
             'price' => $data['price'],
             'currentStock' => $data['currentStock'],
+            'branchId' => $this->pickedBranch($request),
             'availabilityMode' => 'BOTH',
         ]);
 
@@ -482,6 +500,7 @@ class DeskController extends MerchantController
             'remaining' => $remaining,
             'businessType' => $businessType,
             'existingNames' => $existingNames,
+            'branches' => $this->branchChoices($this->tenantId()),
         ]);
     }
 
@@ -504,6 +523,7 @@ class DeskController extends MerchantController
         }
 
         $rows = collect($data['items'])->take($remaining);
+        $branchId = $this->pickedBranch($request);
         $saved = 0;
         $skipped = 0;
 
@@ -529,6 +549,7 @@ class DeskController extends MerchantController
                     'description' => $item->description,
                     'price' => (float) $row['price'],
                     'currentStock' => (int) ($row['stock'] ?? 0),
+                    'branchId' => $branchId,
                     'availabilityMode' => 'BOTH',
                 ]);
                 $saved++;
@@ -592,6 +613,8 @@ class DeskController extends MerchantController
             'suppliers' => Supplier::query()->where('tenantId', $product->tenantId)->orderBy('name')->pluck('name', 'id'),
             'variants' => ProductVariant::query()->where('productId', $product->id)->orderBy('name')->get(),
             'movements' => StockMovement::query()->where('productId', $product->id)->latest('createdAt')->limit(40)->get(),
+            'branches' => $this->branchChoices($product->tenantId),
+            'branchQty' => $this->branchStock()->quantities($product),
             'promos' => Promotion::query()->where('tenantId', $product->tenantId)->where('isActive', true)->orderBy('name')->pluck('name', 'id'),
             'promo' => $promoId ? Promotion::query()->find($promoId) : null,
             'categories' => Product::query()->where('tenantId', $product->tenantId)->where('isActive', true)->distinct()->orderBy('category')->pluck('category'),
@@ -606,7 +629,7 @@ class DeskController extends MerchantController
         if (! $this->seesCosts()) {
             unset($data['costPrice'], $data['wholesalePrice']);
         }
-        unset($data['currentStock']);
+        unset($data['currentStock'], $data['branchStock']);
         $image = $this->storedImage($request);
         if ($image) {
             $data['imageUrl'] = $image;
@@ -646,25 +669,41 @@ class DeskController extends MerchantController
             'quantity' => ['required', 'integer', 'min:1'],
             'notes' => ['nullable', 'string', 'max:255'],
         ]);
-        DB::transaction(function () use ($product, $data) {
+        $branchId = $this->branchStock()->resolveBranch($product->tenantId, $this->pickedBranch($request));
+        DB::transaction(function () use ($product, $data, $branchId) {
             $locked = Product::query()->whereKey($product->id)->lockForUpdate()->first();
-            $before = (int) $locked->currentStock;
-            $delta = $data['type'] === 'ADJUSTMENT_IN' ? (int) $data['quantity'] : -((int) $data['quantity']);
-            $after = max(0, $before + $delta);
-            $locked->forceFill(['currentStock' => $after])->save();
-            StockMovement::query()->create([
-                'productId' => $locked->id,
-                'tenantId' => $locked->tenantId,
-                'type' => $data['type'],
-                'quantity' => $after - $before,
-                'beforeQty' => $before,
-                'afterQty' => $after,
-                'notes' => $data['notes'] ?? null,
-                'createdAt' => now(),
-            ]);
+            $qty = (int) $data['quantity'];
+            if ($data['type'] === 'ADJUSTMENT_IN') {
+                $this->branchStock()->add($locked, $qty, $branchId, 'ADJUSTMENT_IN', ['notes' => $data['notes'] ?? null]);
+            } else {
+                $qty = min($qty, max(0, $this->branchStock()->quantityAt($locked, $branchId)));
+                $this->branchStock()->take($locked, $qty, $branchId, 'ADJUSTMENT_OUT', ['notes' => $data['notes'] ?? null]);
+            }
         });
 
         return back()->with('status', 'Stock updated.');
+    }
+
+    public function transferProductStock(Request $request, Product $product)
+    {
+        abort_unless($this->managesProducts(), 403);
+        abort_unless($product->tenantId === $this->tenantId(), 404);
+        $data = $request->validate([
+            'fromBranchId' => ['required', 'string'],
+            'toBranchId' => ['required', 'string'],
+            'quantity' => ['required', 'integer', 'min:1'],
+            'notes' => ['nullable', 'string', 'max:255'],
+        ]);
+        $branchIds = $this->branchStock()->branches($product->tenantId)->pluck('id')->all();
+        if (! in_array($data['fromBranchId'], $branchIds, true) || ! in_array($data['toBranchId'], $branchIds, true)) {
+            throw ValidationException::withMessages(['toBranchId' => 'Pick branches from this shop.']);
+        }
+        DB::transaction(function () use ($product, $data) {
+            $locked = Product::query()->whereKey($product->id)->lockForUpdate()->first();
+            $this->branchStock()->transfer($locked, $data['fromBranchId'], $data['toBranchId'], (int) $data['quantity'], $data['notes'] ?? null);
+        });
+
+        return back()->with('status', 'Stock moved.');
     }
 
     public function attachProductPromo(Request $request, Product $product)
@@ -717,11 +756,21 @@ class DeskController extends MerchantController
         $status = (string) $request->query('status', '');
         $channel = $shop ? (string) $request->query('channel', '') : '';
         $cashier = $shop ? (string) $request->query('cashier', '') : '';
+        $branches = $shop
+            ? Branch::query()->where('tenantId', $this->tenantId())->orderByDesc('isMain')->orderBy('name')->pluck('name', 'id')
+            : collect();
+        $branch = (string) $request->query('branch', '');
+        if (! $branches->has($branch)) {
+            $branch = '';
+        }
         $from = (string) $request->query('from', '');
         $to = (string) $request->query('to', '');
         $perPage = 20;
 
         $query = $this->orderQuery();
+        if ($branch !== '') {
+            $query->where('branchId', $branch);
+        }
         if ($q !== '') {
             $query->where(function ($inner) use ($q) {
                 $inner->where('customerName', 'ilike', '%'.$q.'%')
@@ -765,11 +814,13 @@ class DeskController extends MerchantController
             'status' => $status,
             'channel' => $channel,
             'cashier' => $cashier,
+            'branches' => $branches,
+            'branch' => $branch,
             'from' => $from,
             'to' => $to,
             'page' => $page,
             'pages' => $pages,
-            'filtered' => $q !== '' || $status !== '' || $channel !== '' || $cashier !== '' || $from !== '' || $to !== '',
+            'filtered' => $q !== '' || $status !== '' || $channel !== '' || $cashier !== '' || $branch !== '' || $from !== '' || $to !== '',
         ]);
     }
 
@@ -885,19 +936,9 @@ class DeskController extends MerchantController
                 if (! $product) {
                     continue;
                 }
-                $before = (int) $product->currentStock;
-                $after = $before + (int) $item->quantity;
-                $product->forceFill(['currentStock' => $after])->save();
-                StockMovement::query()->create([
-                    'productId' => $product->id,
-                    'tenantId' => $order->tenantId,
-                    'type' => 'RETURN',
-                    'quantity' => (int) $item->quantity,
-                    'beforeQty' => $before,
-                    'afterQty' => $after,
+                $this->branchStock()->add($product, (int) $item->quantity, $order->branchId, 'RETURN', [
                     'reference' => $order->id,
                     'notes' => 'Void invoice: '.$reason,
-                    'createdAt' => now(),
                 ]);
             }
 
@@ -1137,10 +1178,18 @@ class DeskController extends MerchantController
                     ->orWhere('barcode', 'ilike', '%'.$q.'%');
             });
         }
+        $branches = $this->branchStock()->branches($this->tenantId());
+        $branch = (string) $request->query('branch', '');
+        if ($branches->count() < 2 || ! $branches->contains('id', $branch)) {
+            $branch = '';
+        }
+        [$level, $bindings] = $branch !== ''
+            ? ['coalesce((select bs."quantity" from branch_stocks bs where bs."productId" = products.id and bs."branchId" = ?), 0)', [$branch]]
+            : ['"currentStock"', []];
         if ($stock === 'low') {
-            $query->where('currentStock', '>', 0)->whereColumn('currentStock', '<=', 'minThreshold');
+            $query->whereRaw($level.' > 0', $bindings)->whereRaw($level.' <= "minThreshold"', $bindings);
         } elseif ($stock === 'out') {
-            $query->where('currentStock', '<=', 0);
+            $query->whereRaw($level.' <= 0', $bindings);
         } else {
             $stock = '';
         }
@@ -1148,14 +1197,18 @@ class DeskController extends MerchantController
         $total = (clone $query)->count();
         $pages = max(1, (int) ceil($total / $perPage));
         $page = min($pages, max(1, (int) $request->query('page', 1)));
+        $products = $query->orderBy('name')->forPage($page, $perPage)->get();
 
         return view('merchant.inventory', [
-            'products' => $query->orderBy('name')->forPage($page, $perPage)->get(),
+            'products' => $products,
+            'branches' => $branches->count() > 1 ? $branches : collect(),
+            'branch' => $branch,
+            'branchQty' => $branch !== '' ? $this->branchStock()->quantitiesAt($this->tenantId(), $branch, $products->pluck('id')->all()) : null,
             'q' => $q,
             'stock' => $stock,
             'page' => $page,
             'pages' => $pages,
-            'filtered' => $q !== '' || $stock !== '',
+            'filtered' => $q !== '' || $stock !== '' || $branch !== '',
             'seesCosts' => $this->seesCosts(),
         ]);
     }
@@ -1172,34 +1225,30 @@ class DeskController extends MerchantController
         ]);
         $product = Product::query()->where('tenantId', $this->tenantId())->where('isActive', true)->findOrFail($data['productId']);
         $actor = $this->user();
+        $branchId = $this->branchStock()->resolveBranch($product->tenantId, $this->pickedBranch($request));
 
-        DB::transaction(function () use ($product, $data, $request, $actor) {
+        DB::transaction(function () use ($product, $data, $request, $actor, $branchId) {
             $locked = Product::query()->whereKey($product->id)->lockForUpdate()->first();
-            $before = (int) $locked->currentStock;
+            $before = $this->branchStock()->quantityAt($locked, $branchId);
             $qty = (int) $data['quantity'];
             if ($data['type'] === 'ADJUSTMENT_OUT' && $qty > $before) {
                 throw ValidationException::withMessages([
-                    'quantity' => 'Only '.$before.' on hand.',
+                    'quantity' => 'Only '.$before.' on hand'.($this->branchStock()->branches($locked->tenantId)->count() > 1 ? ' at that branch.' : '.'),
                 ]);
             }
-            $after = $data['type'] === 'ADJUSTMENT_IN' ? $before + $qty : $before - $qty;
-            $locked->forceFill(['currentStock' => $after])->save();
-            StockMovement::query()->create([
-                'productId' => $locked->id,
-                'tenantId' => $locked->tenantId,
-                'type' => $data['type'],
-                'quantity' => $after - $before,
-                'beforeQty' => $before,
-                'afterQty' => $after,
-                'notes' => trim((string) ($data['notes'] ?? '')) ?: null,
-                'createdAt' => now(),
-            ]);
+            $notes = ['notes' => trim((string) ($data['notes'] ?? '')) ?: null];
+            if ($data['type'] === 'ADJUSTMENT_IN') {
+                $this->branchStock()->add($locked, $qty, $branchId, 'ADJUSTMENT_IN', $notes);
+            } else {
+                $this->branchStock()->take($locked, $qty, $branchId, 'ADJUSTMENT_OUT', $notes);
+            }
             Approval::log($request, $locked->tenantId, $actor->id, $actor->id, 'STOCK_ADJUST', [
                 'productId' => $locked->id,
                 'sku' => $locked->sku,
+                'branchId' => $branchId,
                 'type' => $data['type'],
                 'beforeQty' => $before,
-                'afterQty' => $after,
+                'afterQty' => $data['type'] === 'ADJUSTMENT_IN' ? $before + $qty : $before - $qty,
             ]);
         });
 
@@ -1371,6 +1420,8 @@ class DeskController extends MerchantController
             'supplier' => $supplier,
             'canEmail' => SupplierMessenger::channels($supplier) !== [],
             'ref' => strtoupper(substr($purchaseOrder->id, -8)),
+            'branches' => $this->branchChoices($purchaseOrder->tenantId),
+            'defaultBranch' => $this->branchStock()->resolveBranch($purchaseOrder->tenantId, $this->user()->branchId),
         ]);
     }
 
@@ -1532,7 +1583,8 @@ class DeskController extends MerchantController
         }
 
         $actor = $this->user();
-        DB::transaction(function () use ($purchaseOrder, $items, $received, $request, $actor) {
+        $branchId = $this->branchStock()->resolveBranch($purchaseOrder->tenantId, $this->pickedBranch($request));
+        DB::transaction(function () use ($purchaseOrder, $items, $received, $request, $actor, $branchId) {
             foreach ($items as $item) {
                 $qty = (int) ($received[$item->id] ?? 0);
                 if ($qty < 1) {
@@ -1542,25 +1594,16 @@ class DeskController extends MerchantController
                 if (! $product) {
                     continue;
                 }
-                $before = (int) $product->currentStock;
-                $after = $before + $qty;
-                $product->forceFill(['currentStock' => $after])->save();
                 $item->forceFill(['quantityReceived' => (int) $item->quantityReceived + $qty])->save();
-                StockMovement::query()->create([
-                    'productId' => $product->id,
-                    'tenantId' => $product->tenantId,
-                    'type' => 'PURCHASE_RECEIVED',
-                    'quantity' => $qty,
-                    'beforeQty' => $before,
-                    'afterQty' => $after,
+                $this->branchStock()->add($product, $qty, $branchId, 'PURCHASE_RECEIVED', [
                     'reference' => $purchaseOrder->id,
                     'notes' => 'PO received: '.$purchaseOrder->id,
-                    'createdAt' => now(),
                 ]);
             }
             $purchaseOrder->forceFill(['status' => 'RECEIVED', 'receivedAt' => now()])->save();
             Approval::log($request, $purchaseOrder->tenantId, $actor->id, $actor->id, 'PO_RECEIVED', [
                 'poId' => $purchaseOrder->id,
+                'branchId' => $branchId,
             ]);
         });
 
@@ -1730,6 +1773,8 @@ class DeskController extends MerchantController
             'wholesalePrice' => ['nullable', 'numeric', 'min:0'],
             'vatRateOverride' => ['nullable', 'numeric', 'min:0'],
             'currentStock' => ['nullable', 'integer', 'min:0'],
+            'branchStock' => ['nullable', 'array'],
+            'branchStock.*' => ['nullable', 'integer', 'min:0'],
             'minThreshold' => ['nullable', 'integer', 'min:0'],
             'reorderQty' => ['nullable', 'integer', 'min:0'],
             'leadTimeDays' => ['nullable', 'integer', 'min:0'],
@@ -1808,9 +1853,9 @@ class DeskController extends MerchantController
         $this->guardSku($tenantId, $sku);
         $barcode = ($data['barcode'] ?? null) ?: null;
         $this->guardBarcode($tenantId, $barcode);
-        $stock = (int) ($data['currentStock'] ?? 0);
+        $openings = $this->openingStock($tenantId, $data);
 
-        return DB::transaction(function () use ($data, $tenantId, $sku, $barcode, $stock) {
+        return DB::transaction(function () use ($data, $tenantId, $sku, $barcode, $openings) {
             $product = Product::query()->create([
                 'tenantId' => $tenantId,
                 'name' => $data['name'],
@@ -1825,7 +1870,7 @@ class DeskController extends MerchantController
                 'costPrice' => $data['costPrice'] ?? 0,
                 'wholesalePrice' => $data['wholesalePrice'] ?? null,
                 'vatRateOverride' => $data['vatRateOverride'] ?? null,
-                'currentStock' => $stock,
+                'currentStock' => 0,
                 'minThreshold' => $data['minThreshold'] ?? 5,
                 'reorderQty' => $data['reorderQty'] ?? 0,
                 'leadTimeDays' => $data['leadTimeDays'] ?? 0,
@@ -1835,17 +1880,8 @@ class DeskController extends MerchantController
                 'isActive' => true,
             ]);
 
-            if ($stock > 0) {
-                StockMovement::query()->create([
-                    'productId' => $product->id,
-                    'tenantId' => $tenantId,
-                    'type' => 'ADJUSTMENT_IN',
-                    'quantity' => $stock,
-                    'beforeQty' => 0,
-                    'afterQty' => $stock,
-                    'notes' => 'Initial stock',
-                    'createdAt' => now(),
-                ]);
+            foreach ($openings as $branchId => $qty) {
+                $this->branchStock()->add($product, $qty, $branchId ?: null, 'ADJUSTMENT_IN', ['notes' => 'Initial stock']);
             }
 
             Approval::log(request(), $tenantId, $this->user()->id, $this->user()->id, 'PRODUCT_CREATED', [
@@ -1856,6 +1892,64 @@ class DeskController extends MerchantController
 
             return $product;
         });
+    }
+
+    private function branchStock(): BranchInventory
+    {
+        return app(BranchInventory::class);
+    }
+
+    /**
+     * Active branches as id => name, empty when the shop has a single branch so branch pickers stay hidden.
+     *
+     * @return array<string, string>
+     */
+    private function branchChoices(string $tenantId): array
+    {
+        $branches = $this->branchStock()->branches($tenantId);
+
+        return $branches->count() > 1
+            ? $branches->mapWithKeys(fn ($branch) => [$branch->id => $branch->name.($branch->isMain ? ' (main)' : '')])->all()
+            : [];
+    }
+
+    /**
+     * Opening stock per branch from either a branchStock map (single product form) or a total plus a branchId.
+     *
+     * @return array<string, int> branchId => quantity
+     */
+    private function openingStock(string $tenantId, array $data): array
+    {
+        $branchIds = $this->branchStock()->branches($tenantId)->pluck('id')->all();
+
+        if (is_array($data['branchStock'] ?? null)) {
+            $openings = [];
+            foreach ($data['branchStock'] as $branchId => $qty) {
+                if (in_array($branchId, $branchIds, true) && (int) $qty > 0) {
+                    $openings[$branchId] = (int) $qty;
+                }
+            }
+
+            return $openings;
+        }
+
+        $qty = (int) ($data['currentStock'] ?? 0);
+        if ($qty <= 0) {
+            return [];
+        }
+        $branchId = in_array($data['branchId'] ?? null, $branchIds, true) ? $data['branchId'] : $this->branchStock()->mainBranchId($tenantId);
+
+        return [(string) $branchId => $qty];
+    }
+
+    /**
+     * The branch picked on bulk/CSV/catalogue/starter imports, or null for the main branch.
+     */
+    private function pickedBranch(Request $request): ?string
+    {
+        $branchId = (string) $request->input('branchId', '');
+
+        return $branchId !== '' && Branch::query()->where('tenantId', $this->tenantId())->whereKey($branchId)->exists() ? $branchId : null;
     }
 
     private function productAllowance(): array
@@ -2112,7 +2206,7 @@ class DeskController extends MerchantController
 
             if ($order->status === 'PENDING' && $next === 'RESERVED') {
                 if (! $paid) {
-                    $product->forceFill(['currentStock' => max(0, $before - $qty)])->save();
+                    $this->branchStock()->take($product, min($qty, max(0, $before)), $order->branchId, null);
                 }
 
                 continue;
@@ -2132,18 +2226,14 @@ class DeskController extends MerchantController
             }
 
             if ($order->status === 'RESERVED' && $next === 'CANCELLED') {
-                $product->forceFill([
-                    'currentStock' => $before + $qty,
-                    'reservedQty' => max(0, $reserved - $qty),
-                ])->save();
-                $this->stockMove($product, $order, 'RETURN', $qty, $before, $before + $qty);
+                $product->forceFill(['reservedQty' => max(0, $reserved - $qty)])->save();
+                $this->branchStock()->add($product, $qty, $order->branchId, 'RETURN', ['reference' => $order->id]);
 
                 continue;
             }
 
             if ($order->status === 'COMPLETED' && $next === 'RETURNED') {
-                $product->forceFill(['currentStock' => $before + $qty])->save();
-                $this->stockMove($product, $order, 'RETURN', $qty, $before, $before + $qty);
+                $this->branchStock()->add($product, $qty, $order->branchId, 'RETURN', ['reference' => $order->id]);
             }
         }
     }
@@ -2153,6 +2243,7 @@ class DeskController extends MerchantController
         StockMovement::query()->create([
             'productId' => $product->id,
             'tenantId' => $order->tenantId,
+            'branchId' => $order->branchId ?: $this->branchStock()->mainBranchId($order->tenantId),
             'type' => $type,
             'quantity' => $quantity,
             'beforeQty' => $before,

@@ -81,12 +81,41 @@
         @endif
 
         @if ($tab === 'stock')
+            @if ($branches !== [])
+                <section class="card orders branch-levels">
+                    <p class="kicker band">Stock by branch</p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Branch</th>
+                                <th class="num">On hand</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach ($branches as $branchId => $branchName)
+                                @php $level = (int) ($branchQty[$branchId] ?? 0); @endphp
+                                <tr>
+                                    <td>{{ $branchName }}</td>
+                                    <td class="num stock {{ $level <= 0 ? 'out' : ($level <= (int) $product->minThreshold ? 'low' : 'ok') }}">{{ $level }}</td>
+                                </tr>
+                            @endforeach
+                            <tr class="total">
+                                <td><strong>All branches</strong></td>
+                                <td class="num"><strong>{{ $product->currentStock }}</strong></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </section>
+            @endif
             <section class="card">
                 <p class="kicker">Adjust stock</p>
-                <p class="muted">{{ $product->currentStock }} on hand. {{ max(0, (int) $product->currentStock - (int) $product->reservedQty) }} free to sell.</p>
+                <p class="muted">{{ $product->currentStock }} on hand{{ $branches !== [] ? ' across all branches' : '' }}. {{ max(0, (int) $product->currentStock - (int) $product->reservedQty) }} free to sell.</p>
                 <form method="post" action="{{ route('products.stock', $product) }}">
                     @csrf
                     <div class="product-fields">
+                        @if ($branches !== [])
+                            <x-ui.select name="branchId" label="Branch" :value="array_key_first($branches)" :options="$branches" />
+                        @endif
                         <x-ui.select name="type" label="Movement" value="ADJUSTMENT_IN" :options="['ADJUSTMENT_IN' => 'Stock in', 'ADJUSTMENT_OUT' => 'Stock out']" />
                         <label>Quantity <input type="number" name="quantity" min="1" required></label>
                         <label class="wide">Notes <input name="notes"></label>
@@ -94,11 +123,31 @@
                     <button type="submit">Update stock</button>
                 </form>
             </section>
+            @if ($branches !== [])
+                @php
+                    $fromDefault = collect($branches)->keys()->first(fn ($id) => ($branchQty[$id] ?? 0) > 0) ?? array_key_first($branches);
+                    $toDefault = collect($branches)->keys()->first(fn ($id) => $id !== $fromDefault);
+                @endphp
+                <section class="card">
+                    <p class="kicker">Move stock between branches</p>
+                    <form method="post" action="{{ route('products.transfer', $product) }}">
+                        @csrf
+                        <div class="product-fields">
+                            <x-ui.select name="fromBranchId" label="From" :value="old('fromBranchId', $fromDefault)" :options="$branches" />
+                            <x-ui.select name="toBranchId" label="To" :value="old('toBranchId', $toDefault)" :options="$branches" />
+                            <label>Quantity <input type="number" name="quantity" min="1" value="{{ old('quantity') }}" required></label>
+                            <label class="wide">Notes <input name="notes" value="{{ old('notes') }}" maxlength="255" placeholder="Optional, e.g. driver or waybill"></label>
+                        </div>
+                        <button type="submit">Move stock</button>
+                    </form>
+                </section>
+            @endif
             <section class="card orders">
                 <table>
                     <thead>
                         <tr>
                             <th>When</th>
+                            @if ($branches !== [])<th>Branch</th>@endif
                             <th>Type</th>
                             <th class="num">Qty</th>
                             <th class="num">Before</th>
@@ -110,6 +159,7 @@
                         @forelse ($movements as $movement)
                             <tr>
                                 <td>{{ $movement->createdAt?->format('d M H:i') }}</td>
+                                @if ($branches !== [])<td>{{ $branches[$movement->branchId] ?? '—' }}</td>@endif
                                 <td>{{ str_replace('_', ' ', $movement->type) }}</td>
                                 <td class="num">{{ $movement->quantity }}</td>
                                 <td class="num">{{ $movement->beforeQty }}</td>
@@ -117,7 +167,7 @@
                                 <td>{{ $movement->notes ?: '—' }}</td>
                             </tr>
                         @empty
-                            <tr><td class="empty" colspan="6">No stock movements yet.</td></tr>
+                            <tr><td class="empty" colspan="{{ $branches !== [] ? 7 : 6 }}">No stock movements yet.</td></tr>
                         @endforelse
                     </tbody>
                 </table>

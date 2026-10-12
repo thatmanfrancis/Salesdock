@@ -6,6 +6,7 @@
     @php
         $adjusting = old('form') === 'adjust' && $errors->any();
         $columns = $seesCosts ? 8 : 7;
+        $branchOptions = $branches->mapWithKeys(fn ($row) => [$row->id => $row->name.($row->isMain ? ' (main)' : '')])->all();
     @endphp
     <div class="page">
         <div class="page-tools">
@@ -16,8 +17,15 @@
                     <input type="search" name="q" value="{{ $q }}" placeholder="Name, SKU, or barcode">
                 </div>
                 <x-ui.select name="stock" label="Stock" :value="$stock" :options="['' => 'All', 'low' => 'Low stock', 'out' => 'Out of stock']" />
+                @if ($branchOptions !== [])
+                    <x-ui.select name="branch" label="Branch" :value="$branch" :options="['' => 'All branches'] + $branchOptions" />
+                @endif
             </x-ui.filter>
         </div>
+
+        @if ($branch !== '')
+            <p class="note branch-scope">Showing stock at <strong>{{ $branchOptions[$branch] ?? 'this branch' }}</strong>. Hover a count to see the total across all branches.</p>
+        @endif
 
         <section class="card orders">
             <table>
@@ -38,13 +46,14 @@
                 <tbody>
                     @forelse ($products as $product)
                         @php
-                            $tone = (int) $product->currentStock <= 0 ? 'out' : ((int) $product->currentStock <= (int) $product->minThreshold ? 'low' : 'ok');
+                            $level = $branchQty !== null ? (int) ($branchQty[$product->id] ?? 0) : (int) $product->currentStock;
+                            $tone = $level <= 0 ? 'out' : ($level <= (int) $product->minThreshold ? 'low' : 'ok');
                         @endphp
                         <tr>
                             <td>{{ $product->name }}</td>
                             <td><span class="ref">{{ $product->sku }}</span></td>
                             <td>{{ $product->category ?: '—' }}</td>
-                            <td class="num stock {{ $tone }}">{{ $tone === 'out' ? 'Out' : $product->currentStock }}</td>
+                            <td class="num stock {{ $tone }}" @if ($branchQty !== null) title="{{ $product->currentStock }} across all branches" @endif>{{ $tone === 'out' ? 'Out' : $level }}</td>
                             <td class="num">{{ $product->reservedQty }}</td>
                             <td class="num">{{ $product->minThreshold }}</td>
                             @if ($seesCosts)
@@ -87,6 +96,9 @@
                 <strong data-adjust-title>Adjust stock</strong>
                 <button type="button" class="ghost" data-close aria-label="Close">✕</button>
             </div>
+            @if ($branchOptions !== [])
+                <x-ui.select name="branchId" label="Branch" :required="true" :value="$adjusting ? old('branchId', array_key_first($branchOptions)) : ($branch !== '' ? $branch : array_key_first($branchOptions))" :options="$branchOptions" />
+            @endif
             <x-ui.select name="type" label="Movement" :required="true" :value="$adjusting ? old('type', 'ADJUSTMENT_IN') : 'ADJUSTMENT_IN'" :options="['ADJUSTMENT_IN' => 'Stock in', 'ADJUSTMENT_OUT' => 'Stock out']" />
             <label>
                 <span>Quantity <span class="req">*</span></span>

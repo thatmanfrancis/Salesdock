@@ -8,6 +8,7 @@ use App\Models\TenantRegistration;
 use App\Models\User;
 use App\Services\TenantProvisioner;
 use App\Support\AuthMail;
+use App\Support\Turnstile;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -22,6 +23,8 @@ class RegisterController extends Controller
 
     public function store(Request $request)
     {
+        Turnstile::verify($request, 'signup');
+
         $data = $request->validate([
             'businessName' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255'],

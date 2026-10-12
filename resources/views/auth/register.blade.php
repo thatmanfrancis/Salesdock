@@ -14,10 +14,11 @@
                 <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{{ $errors->first() }}</div>
             @endif
 
-            <form method="post" action="{{ route('register') }}" id="register-form" class="space-y-5" autocomplete="off">
+            <form method="post" action="{{ route('register') }}" id="register-form" class="space-y-5" autocomplete="off" data-gate>
                 @csrf
                 <x-auth.field label="Business name" name="businessName" :value="old('businessName')" placeholder="Kemi's Fashion" required />
                 <x-auth.field label="Email" name="email" type="text" :value="old('email')" placeholder="you@business.com" inputmode="email" required />
+                <x-turnstile action="signup" />
                 <p class="text-xs text-gray-500">We'll email you a link to verify this address and set your password. By signing up, you agree to our <a href="{{ route('terms') }}" target="_blank" class="font-semibold text-green-600 underline">Terms</a> and <a href="{{ route('privacy') }}" target="_blank" class="font-semibold text-green-600 underline">Privacy Policy</a>.</p>
                 <x-auth.submit id="reg-submit" label="Create account" loading="Creating account…" />
             </form>

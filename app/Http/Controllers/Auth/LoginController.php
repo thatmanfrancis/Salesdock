@@ -8,9 +8,12 @@ use App\Models\TenantRegistration;
 use App\Models\User;
 use App\Support\Password;
 use App\Support\Totp;
+use App\Support\Turnstile;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
 
 class LoginController extends Controller
@@ -38,12 +41,20 @@ class LoginController extends Controller
             return $this->confirmTwoFa($request);
         }
 
+        Turnstile::verify($request, 'login');
+
         $data = $request->validate([
             'email' => ['required', 'email'],
             'password' => ['required', 'string'],
         ]);
 
         $email = strtolower(trim($data['email']));
+        $lockouts = [
+            ['login-fail:'.$email.'|'.$request->ip(), 5, 900],
+            ['login-fail-account:'.$email, 20, 3600],
+        ];
+        $this->guardLockouts($request, $lockouts, 'email', 'password');
+
         $user = User::query()->with('role')->whereRaw('lower(email) = ?', [$email])->first();
         $passwordMatches = $user && Password::check($data['password'], $user->passwordHash);
 
@@ -53,8 +64,12 @@ class LoginController extends Controller
                 return $this->registrationHold($registration);
             }
 
+            $this->recordFailure($lockouts);
+
             throw ValidationException::withMessages(['email' => 'Those credentials do not match our records.']);
         }
+
+        $this->clearLockouts($lockouts);
 
         if (! $user->isActive) {
             throw ValidationException::withMessages(['email' => 'This account is inactive. Ask the store owner to turn it back on.']);
@@ -124,12 +139,22 @@ class LoginController extends Controller
             'two_fa_code.required' => 'Enter the 6-digit code from your authenticator app.',
             'two_fa_code.digits' => 'Enter the 6-digit code from your authenticator app.',
         ]);
-        $user = User::query()->with('role')->find($request->session()->get('pending_2fa'));
+        $userId = (string) $request->session()->get('pending_2fa');
+        $lockouts = [['twofa-fail:'.$userId, 5, 900]];
+        if ($this->lockedFor($lockouts) > 0) {
+            $request->session()->forget('pending_2fa');
+        }
+        $this->guardLockouts($request, $lockouts, 'two_fa_code', 'two-factor');
+
+        $user = User::query()->with('role')->find($userId);
 
         if (! $user || ! Totp::verify($user->twoFaSecret, $data['two_fa_code'])) {
+            $this->recordFailure($lockouts);
+
             throw ValidationException::withMessages(['two_fa_code' => 'That authentication code is invalid.']);
         }
 
+        $this->clearLockouts($lockouts);
         $request->session()->forget('pending_2fa');
 
         return $this->completeLogin($request, $user);
@@ -170,6 +195,8 @@ class LoginController extends Controller
             return $this->changePin($request);
         }
 
+        Turnstile::verify($request, 'login');
+
         $data = $request->validate([
             'pin' => ['required', 'digits_between:4,6'],
         ]);
@@ -181,14 +208,25 @@ class LoginController extends Controller
             ]);
         }
 
+        $store = mb_strtolower($slug);
+        $lockouts = [
+            ['pin-fail:'.$store.'|'.$request->ip(), 5, 900],
+            ['pin-fail-store:'.$store, 30, 3600],
+        ];
+        $this->guardLockouts($request, $lockouts, 'pin', 'PIN');
+
         $tenant = Tenant::query()->where('slug', $slug)->first();
         $user = $tenant
             ? User::query()->with('role')->where('tenantId', $tenant->id)->where('pin', hash('sha256', $data['pin']))->where('isActive', true)->first()
             : null;
 
         if (! $user) {
+            $this->recordFailure($lockouts);
+
             throw ValidationException::withMessages(['pin' => 'That PIN was not recognized for this store.']);
         }
+
+        $this->clearLockouts($lockouts);
 
         if ($user->pinIsDefault) {
             $request->session()->put('pin_change_user', $user->id);
@@ -197,6 +235,59 @@ class LoginController extends Controller
         }
 
         return $this->completeLogin($request, $user);
+    }
+
+    /**
+     * @param  list<array{0: string, 1: int, 2: int}>  $lockouts  [key, max failures, decay seconds]
+     */
+    private function guardLockouts(Request $request, array $lockouts, string $field, string $kind): void
+    {
+        $seconds = $this->lockedFor($lockouts);
+        if ($seconds <= 0) {
+            return;
+        }
+
+        Log::warning('Sign-in locked after repeated failures', ['kind' => $kind, 'ip' => $request->ip(), 'retryAfter' => $seconds]);
+        $wait = $seconds >= 120 ? (int) ceil($seconds / 60).' minutes' : $seconds.' seconds';
+
+        throw ValidationException::withMessages([
+            $field => "Too many failed attempts. For your security, sign-in is paused for {$wait}.",
+        ]);
+    }
+
+    /**
+     * @param  list<array{0: string, 1: int, 2: int}>  $lockouts
+     */
+    private function lockedFor(array $lockouts): int
+    {
+        $seconds = 0;
+        foreach ($lockouts as [$key, $max]) {
+            if (RateLimiter::tooManyAttempts($key, $max)) {
+                $seconds = max($seconds, RateLimiter::availableIn($key));
+            }
+        }
+
+        return $seconds;
+    }
+
+    /**
+     * @param  list<array{0: string, 1: int, 2: int}>  $lockouts
+     */
+    private function recordFailure(array $lockouts): void
+    {
+        foreach ($lockouts as [$key, , $decay]) {
+            RateLimiter::hit($key, $decay);
+        }
+    }
+
+    /**
+     * Clears the per-IP counters on success; account-wide counters keep running so a distributed attack still trips them.
+     *
+     * @param  list<array{0: string, 1: int, 2: int}>  $lockouts
+     */
+    private function clearLockouts(array $lockouts): void
+    {
+        RateLimiter::clear($lockouts[0][0]);
     }
 
     private function changePin(Request $request)

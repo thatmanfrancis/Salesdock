@@ -66,6 +66,7 @@
             <li><strong>Payments:</strong> Flutterwave, to process subscription and storefront payments.</li>
             <li><strong>Email:</strong> Zoho ZeptoMail, to deliver account, billing and supplier emails.</li>
             <li><strong>Live chat:</strong> tawk.to, if you use the chat window on our website.</li>
+            <li><strong>Security and bot protection:</strong> Cloudflare, which serves our website and runs the Turnstile check on sign-in, sign-up, password reset and checkout forms. It processes your IP address and basic browser signals to tell people from automated attacks.</li>
             <li><strong>Hosting:</strong> our cloud hosting and database providers.</li>
         </ul>
         <p>We may also disclose data where the law requires it, or to protect the rights and safety of SalesDock, our customers or the public.</p>

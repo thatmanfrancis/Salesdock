@@ -41,6 +41,11 @@
                 <p class="kicker">Add several</p>
                 <form method="post" action="{{ route('products.bulk') }}">
                     @csrf
+                    @if ($branches !== [])
+                        <div class="branch-pick">
+                            <x-ui.select name="branchId" label="Stock goes to" :value="array_key_first($branches)" :options="$branches" />
+                        </div>
+                    @endif
                     <div class="bulk">
                         @foreach (range(0, 4) as $index)
                             <label>Name <input name="rows[{{ $index }}][name]"></label>
@@ -72,8 +77,16 @@
             <section class="card">
                 <p class="kicker">Import CSV</p>
                 <p class="muted">Name and price are required. The template has the other columns this import reads.</p>
+                @if ($branches !== [])
+                    <p class="muted">Stock goes to the branch you pick below. To split rows across branches, add a <strong>branch</strong> column with the branch name; rows without one use the branch picked here.</p>
+                @endif
                 <form method="post" action="{{ route('products.csv') }}" enctype="multipart/form-data">
                     @csrf
+                    @if ($branches !== [])
+                        <div class="branch-pick">
+                            <x-ui.select name="branchId" label="Stock goes to" :value="array_key_first($branches)" :options="$branches" />
+                        </div>
+                    @endif
                     <div class="csv-file" data-csv>
                         <input type="file" name="file" accept=".csv,text/csv" required data-csv-input>
                         <button type="button" data-csv-open>Choose CSV</button>
@@ -141,10 +154,18 @@
                         <p class="muted" style="margin-top:0.5rem">
                             {{ $catalogue->count() }} item{{ $catalogue->count() === 1 ? '' : 's' }} in <strong>{{ $catalogueCat }}</strong>
                         </p>
+                        @if ($branches !== [] && $catalogue->isNotEmpty())
+                            <div class="branch-pick" id="catalogue-branch">
+                                <x-ui.select name="catalogueBranch" label="Stock goes to" :value="array_key_first($branches)" :options="$branches" />
+                            </div>
+                        @endif
                         @forelse ($catalogue as $item)
                             <form class="catalogue-row" method="post" action="{{ route('products.catalogue') }}">
                                 @csrf
                                 <input type="hidden" name="catalogueId" value="{{ $item->id }}">
+                                @if ($branches !== [])
+                                    <input type="hidden" name="branchId" value="{{ array_key_first($branches) }}" data-catalogue-branch>
+                                @endif
                                 <strong>{{ $item->name }}</strong>
                                 <span>{{ $item->category ?: 'General' }}</span>
                                 <label>Price <input type="number" name="price" step="0.01" min="0.01" required></label>
@@ -154,6 +175,11 @@
                         @empty
                             <p class="muted">No items in this category.</p>
                         @endforelse
+                        <script>
+                            document.querySelector('#catalogue-branch [data-select-value]')?.addEventListener('change', (event) => {
+                                document.querySelectorAll('[data-catalogue-branch]').forEach((input) => { input.value = event.target.value; });
+                            });
+                        </script>
                     @endif
                 @endif
             </section>

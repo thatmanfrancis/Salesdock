@@ -33,7 +33,7 @@
                     title="Exports the analytics currently shown on this page"
                 >Download PDF (current filters)</a>
                 @if ($filtered)
-                    <span class="pdf-export-hint">Range: {{ $range }}</span>
+                    <span class="pdf-export-hint">Range: {{ $range }}{{ $branchLabel ? ' · '.$branchLabel : '' }}</span>
                 @endif
             </div>
             <x-ui.filter
@@ -44,8 +44,19 @@
                 :active="$filtered"
                 label="Filter analytics"
                 :options="$periods"
-            />
+            >
+                @if ($branchNames->count() > 1)
+                    <x-ui.select name="branch" label="Branch" :value="$branch" :options="['' => 'All branches'] + $branchNames->all()" />
+                @endif
+            </x-ui.filter>
         </div>
+
+        @if ($branchLabel)
+            <p class="note branch-scope">
+                Showing <strong>{{ $branchLabel }}</strong> only.
+                <a href="{{ route('analytics', array_diff_key(request()->query(), ['branch' => true])) }}">See all branches</a>
+            </p>
+        @endif
 
         <div class="ledger-line">
             <article>
@@ -138,8 +149,14 @@
             @else
                 <div class="pnl">
                     @foreach ($branches as $row)
-                        <div class="pnl-row">
-                            <span>{{ $row['label'] }}</span>
+                        <div @class(['pnl-row', 'picked' => $branchLabel && $row['id'] === $branch])>
+                            <span>
+                                @if ($row['id'] && $branchNames->count() > 1)
+                                    <a href="{{ route('analytics', ['branch' => $row['id']] + request()->query()) }}" title="Show only {{ $row['label'] }}">{{ $row['label'] }}</a>
+                                @else
+                                    {{ $row['label'] }}
+                                @endif
+                            </span>
                             <div class="pnl-track"><i style="width: {{ $row['width'] }}%; background: #22c55e"></i></div>
                             <strong>{{ $money($row['amount']) }}</strong>
                             <em>{{ number_format($row['width'], 1) }}%</em>
@@ -147,6 +164,51 @@
                     @endforeach
                 </div>
             @endif
+        </section>
+
+        <section class="card orders staff-performance">
+            <div class="band-head">
+                <p class="kicker band">Staff performance{{ $branchLabel ? ' · '.$branchLabel : '' }}</p>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Staff</th>
+                        <th>Branch</th>
+                        <th class="num">Sales</th>
+                        <th class="num">Orders</th>
+                        <th class="num">Avg basket</th>
+                        <th class="num">Discounts</th>
+                        <th class="num">Voids</th>
+                        <th class="num">Refunds</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @forelse ($staffRows as $row)
+                        <tr>
+                            <td>
+                                <strong class="who">{{ $row['name'] }}</strong>
+                                @if ($row['role'])
+                                    <span class="sku">{{ $row['role'] }}{{ $row['active'] ? '' : ' · inactive' }}</span>
+                                @endif
+                                <span class="share"><i style="width: {{ $row['width'] }}%"></i></span>
+                            </td>
+                            <td>{{ $row['branch'] ?? '—' }}</td>
+                            <td class="num">{{ $money($row['revenue']) }}</td>
+                            <td class="num">{{ number_format($row['orders']) }}</td>
+                            <td class="num">{{ $money($row['aov']) }}</td>
+                            <td class="num">{{ $row['discounts'] > 0 ? $money($row['discounts']) : '—' }}</td>
+                            <td class="num">{!! $row['voids'] > 0 ? '<span class="pill margin warn">'.$row['voids'].'</span>' : '—' !!}</td>
+                            <td class="num">{{ $row['refunds'] > 0 ? $row['refunds'].' · '.$money($row['refunded']) : '—' }}</td>
+                        </tr>
+                    @empty
+                        <tr>
+                            <td class="empty" colspan="8">No staff sales in this range.</td>
+                        </tr>
+                    @endforelse
+                </tbody>
+            </table>
+            <p class="hint staff-note">Sales are credited to whoever was signed in at the till. Voids and refunds are counted against the cashier who made the original sale.</p>
         </section>
 
         <div class="split even">

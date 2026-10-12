@@ -155,6 +155,11 @@
                             <div class="totals">
                                 <div class="grand"><span>Total</span><span>{{ $money($order->totalCost) }}</span></div>
                                 @if ($order->status === 'SENT')
+                                    @if ($branches !== [])
+                                        <div class="receive-branch">
+                                            <x-ui.select name="branchId" label="Receive into branch" :value="$defaultBranch" :options="$branches" />
+                                        </div>
+                                    @endif
                                     <div class="ui-modal-actions">
                                         <button type="submit" data-loading="Receiving…"><span data-label>Receive goods</span></button>
                                     </div>

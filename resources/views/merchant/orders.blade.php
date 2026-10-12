@@ -13,6 +13,9 @@
                 <x-ui.select name="status" label="Status" :value="$status" :options="['' => 'All statuses', 'PENDING' => 'Pending', 'RESERVED' => 'Reserved', 'COMPLETED' => 'Completed', 'CANCELLED' => 'Cancelled', 'RETURNED' => 'Returned']" />
                 @if ($shop)
                     <x-ui.select name="channel" label="Channel" :value="$channel" :options="['' => 'All channels', 'POS' => 'POS', 'ONLINE' => 'Online', 'WHATSAPP' => 'WhatsApp', 'INSTAGRAM' => 'Instagram', 'LINK' => 'Link']" />
+                    @if ($branches->count() > 1)
+                        <x-ui.select name="branch" label="Branch" :value="$branch" :options="['' => 'All branches'] + $branches->all()" />
+                    @endif
                     <x-ui.select name="cashier" label="Cashier" :value="$cashier" :options="['' => 'All cashiers'] + $names->all()" />
                 @endif
                 <div class="ui-filter-dates">
@@ -30,6 +33,9 @@
                         <th>Status</th>
                         @if ($shop)
                             <th>Channel</th>
+                            @if ($branches->count() > 1)
+                                <th>Branch</th>
+                            @endif
                             <th>Cashier</th>
                         @endif
                         <th>Customer</th>
@@ -43,6 +49,9 @@
                             <td>{{ $order->status }}</td>
                             @if ($shop)
                                 <td>{{ $order->channel }}</td>
+                                @if ($branches->count() > 1)
+                                    <td>{{ $branches[$order->branchId] ?? '—' }}</td>
+                                @endif
                                 <td>{{ $names[$order->cashierId] ?? '—' }}</td>
                             @endif
                             <td><a href="{{ route('orders.show', $order) }}">{{ $order->customerName ?: 'Walk-in' }}</a></td>
@@ -50,7 +59,7 @@
                         </tr>
                     @empty
                         <tr>
-                            <td class="empty" colspan="{{ $shop ? 6 : 4 }}">No orders found.</td>
+                            <td class="empty" colspan="{{ $shop ? ($branches->count() > 1 ? 7 : 6) : 4 }}">No orders found.</td>
                         </tr>
                     @endforelse
                 </tbody>

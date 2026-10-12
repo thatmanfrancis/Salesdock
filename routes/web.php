@@ -39,22 +39,22 @@ Route::get('/terms', fn () => view('pages.terms', ['contact' => PlatformSetting:
 
 Route::middleware('guest')->group(function () {
     Route::get('/login', [LoginController::class, 'create'])->name('login');
-    Route::post('/login', [LoginController::class, 'store']);
+    Route::post('/login', [LoginController::class, 'store'])->middleware('throttle:auth-login');
     Route::get('/register', [RegisterController::class, 'create'])->name('register');
-    Route::post('/register', [RegisterController::class, 'store']);
-    Route::post('/register/resend', [RegisterController::class, 'resend'])->middleware('throttle:5,1')->name('register.resend');
+    Route::post('/register', [RegisterController::class, 'store'])->middleware('throttle:auth-register');
+    Route::post('/register/resend', [RegisterController::class, 'resend'])->middleware('throttle:auth-mail')->name('register.resend');
     Route::get('/forgot-password', [PasswordController::class, 'requestForm'])->name('password.request');
-    Route::post('/forgot-password', [PasswordController::class, 'send'])->name('password.email');
-    Route::get('/reset-password', [PasswordController::class, 'resetForm'])->name('password.reset');
-    Route::post('/reset-password', [PasswordController::class, 'reset'])->name('password.update');
+    Route::post('/forgot-password', [PasswordController::class, 'send'])->middleware('throttle:auth-mail')->name('password.email');
+    Route::get('/reset-password', [PasswordController::class, 'resetForm'])->middleware('throttle:auth-token')->name('password.reset');
+    Route::post('/reset-password', [PasswordController::class, 'reset'])->middleware('throttle:auth-token')->name('password.update');
 });
 
-Route::get('/verify-email', [VerifyEmailController::class, 'show'])->name('verify-email');
-Route::post('/verify-email', [VerifyEmailController::class, 'store'])->name('verify-email.store');
+Route::get('/verify-email', [VerifyEmailController::class, 'show'])->middleware('throttle:auth-token')->name('verify-email');
+Route::post('/verify-email', [VerifyEmailController::class, 'store'])->middleware('throttle:auth-token')->name('verify-email.store');
 Route::view('/registration-received', 'auth.received')->name('registration-received');
 
-Route::get('/select-plan', [SelectPlanController::class, 'create'])->name('select-plan');
-Route::post('/select-plan', [SelectPlanController::class, 'store'])->name('select-plan.store');
+Route::get('/select-plan', [SelectPlanController::class, 'create'])->middleware('throttle:auth-token')->name('select-plan');
+Route::post('/select-plan', [SelectPlanController::class, 'store'])->middleware('throttle:auth-token')->name('select-plan.store');
 Route::get('/pay/{invoice}', [PaymentController::class, 'checkout'])->name('billing.checkout');
 Route::get('/billing/verify', [PaymentController::class, 'verify'])->name('billing.verify');
 Route::post('/billing/webhook', [PaymentController::class, 'webhook'])->name('billing.webhook');
@@ -87,9 +87,9 @@ Route::prefix('store/{slug}')->group(function () {
 Route::middleware('auth')->group(function () {
     Route::post('/logout', [LoginController::class, 'destroy'])->name('logout');
     Route::get('/welcome-back', [WelcomeBackController::class, 'show'])->name('welcome-back');
-    Route::post('/welcome-back', [WelcomeBackController::class, 'store'])->name('welcome-back.store');
+    Route::post('/welcome-back', [WelcomeBackController::class, 'store'])->middleware('throttle:auth-session')->name('welcome-back.store');
     Route::get('/complete-profile', [CompleteProfileController::class, 'show'])->name('complete-profile');
-    Route::post('/complete-profile', [CompleteProfileController::class, 'store'])->name('complete-profile.store');
+    Route::post('/complete-profile', [CompleteProfileController::class, 'store'])->middleware('throttle:auth-session')->name('complete-profile.store');
 
     Route::middleware(['away', 'workspace'])->group(function () {
         Route::view('/suspended', 'suspended')->name('suspended');
@@ -115,6 +115,7 @@ Route::middleware('auth')->group(function () {
         Route::put('/products/{product}', [DeskController::class, 'updateProduct'])->name('products.update');
         Route::post('/products/{product}/deactivate', [DeskController::class, 'deactivateProduct'])->name('products.deactivate');
         Route::post('/products/{product}/stock', [DeskController::class, 'adjustProductStock'])->name('products.stock');
+        Route::post('/products/{product}/transfer', [DeskController::class, 'transferProductStock'])->name('products.transfer');
         Route::post('/products/{product}/promo', [DeskController::class, 'attachProductPromo'])->name('products.promo');
         Route::post('/products/{product}/variants', [DeskController::class, 'storeVariant'])->name('products.variants.store');
         Route::get('/orders', [DeskController::class, 'orders'])->name('orders');
