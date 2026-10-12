@@ -8,6 +8,7 @@ use App\Models\Order;
 use App\Models\Subscription;
 use App\Models\Tenant;
 use App\Models\TenantRegistration;
+use Illuminate\Support\Facades\Log;
 
 class BillingService
 {
@@ -76,18 +77,41 @@ class BillingService
             ]);
     }
 
-    public function settleReference(string $txRef, array $payment, SaleRecorder $sales): void
+    /**
+     * Applies a Flutterwave-verified payment to the invoice or storefront order it belongs to.
+     * Returns what was settled, or null when the payment does not match (wrong reference, amount, currency or status).
+     */
+    public function settlePayment(array $payment, Flutterwave $flutterwave, SaleRecorder $sales): ?string
     {
-        $invoice = BillingInvoice::query()->where('invoiceNumber', $txRef)->first();
+        $reference = Flutterwave::baseReference((string) ($payment['tx_ref'] ?? ''));
+        if ($reference === '') {
+            return null;
+        }
+
+        $invoice = BillingInvoice::query()->where('invoiceNumber', $reference)->first();
         if ($invoice) {
+            if ($invoice->status !== 'PAID' && ! $flutterwave->confirms($payment, $reference, (float) $invoice->amount)) {
+                Log::warning('Flutterwave payment did not match invoice', ['invoice' => $reference, 'paid' => $payment['amount'] ?? null, 'status' => $payment['status'] ?? null]);
+
+                return null;
+            }
             $this->activatePaid($invoice, $payment);
 
-            return;
+            return 'invoice';
         }
 
-        $order = Order::query()->where('paymentRef', $txRef)->first();
+        $order = Order::query()->where('paymentRef', $reference)->first();
         if ($order) {
-            $sales->completePending($order, (string) ($payment['id'] ?? $txRef));
+            if ($order->status === 'PENDING' && ! $flutterwave->confirms($payment, $reference, (float) $order->netAmount)) {
+                Log::warning('Flutterwave payment did not match order', ['order' => $reference, 'paid' => $payment['amount'] ?? null, 'status' => $payment['status'] ?? null]);
+
+                return null;
+            }
+            $sales->completePending($order, (string) ($payment['id'] ?? $reference));
+
+            return 'order';
         }
+
+        return null;
     }
 }

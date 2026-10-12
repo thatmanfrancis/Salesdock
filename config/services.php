@@ -40,6 +40,13 @@ return [
         'widget_id'   => env('TAWK_WIDGET_ID', 'default'),
     ],
 
+    'flutterwave' => [
+        'public_key'  => env('FLUTTERWAVE_PUBLIC_KEY'),
+        'secret_key'  => env('FLUTTERWAVE_SECRET_KEY'),
+        // Value you choose in Flutterwave > Settings > Webhooks; sent back in the verif-hash header.
+        'secret_hash' => env('FLUTTERWAVE_SECRET_HASH'),
+    ],
+
     'turnstile' => [
         'site_key'  => env('TURNSTILE_SITE_KEY'),
         'secret'    => env('TURNSTILE_SECRET'),

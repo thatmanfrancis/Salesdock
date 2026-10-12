@@ -9,28 +9,25 @@
         @if ((float) $order->serviceCharge > 0)
             <p class="muted">Includes ₦{{ number_format($order->serviceCharge, 2) }} service charge (1.5%).</p>
         @endif
-        @if ($publicKey)
-            <button type="button" id="pay" class="sf-btn">Pay with Flutterwave</button>
+        @if ($errors->any())
+            <p class="sf-flash error" role="alert">{{ $errors->first() }}</p>
+        @endif
+        @if ($ready)
+            <form method="post" action="{{ route('store.pay.start', [$tenant->slug, $order->paymentRef]) }}" data-pay-form>
+                @csrf
+                <button type="submit" class="sf-btn" data-loading="Opening Flutterwave…">Pay with Flutterwave</button>
+            </form>
+            <p class="muted">You'll pay on Flutterwave's secure page, then come straight back to your order.</p>
+            <script>
+                document.querySelector('[data-pay-form]').addEventListener('submit', function (event) {
+                    var button = event.target.querySelector('button');
+                    button.disabled = true;
+                    button.textContent = button.dataset.loading;
+                });
+            </script>
         @else
             <p>Card checkout is not configured. Your order reference is {{ $order->paymentRef }}.</p>
             <a class="sf-btn ghost" href="{{ route('store.order', [$tenant->slug, $order->paymentRef]) }}">View order</a>
         @endif
     </section>
-    @if ($publicKey)
-        <script src="https://checkout.flutterwave.com/v3.js"></script>
-        <script>
-            document.getElementById('pay').addEventListener('click', function () {
-                FlutterwaveCheckout({
-                    public_key: @json($publicKey),
-                    tx_ref: @json($order->paymentRef),
-                    amount: {{ (float) $order->netAmount }},
-                    currency: 'NGN',
-                    payment_options: 'card,banktransfer,ussd',
-                    customer: { email: @json($order->customerEmail), name: @json($order->customerName) },
-                    customizations: { title: @json($config->storeName), description: 'Order' },
-                    redirect_url: @json($redirect),
-                });
-            });
-        </script>
-    @endif
 @endsection

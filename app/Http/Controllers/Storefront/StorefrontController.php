@@ -8,12 +8,14 @@ use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\StorefrontConfig;
 use App\Models\Tenant;
+use App\Services\BillingService;
 use App\Services\Flutterwave;
 use App\Services\SaleRecorder;
 use App\Services\StoreCart;
 use App\Support\Turnstile;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
@@ -247,24 +249,52 @@ class StorefrontController extends Controller
 
         return $this->storeView('store.pay', $tenant, $config, [
             'order' => $order,
-            'publicKey' => $flutterwave->publicKey(),
-            'redirect' => route('store.order', ['slug' => $slug, 'ref' => $ref]),
+            'ready' => $flutterwave->ready() && $order->status === 'PENDING',
         ]);
     }
 
-    public function order(string $slug, string $ref, Flutterwave $flutterwave, SaleRecorder $sales): View
+    public function startPayment(string $slug, string $ref, Flutterwave $flutterwave): RedirectResponse
+    {
+        [$tenant, $config] = $this->store($slug);
+        $order = Order::query()->where('tenantId', $tenant->id)->where('paymentRef', $ref)->where('status', 'PENDING')->firstOrFail();
+
+        try {
+            $link = $flutterwave->checkoutLink([
+                'reference' => $order->paymentRef,
+                'amount' => (float) $order->netAmount,
+                'email' => (string) $order->customerEmail,
+                'name' => $order->customerName,
+                'phone' => $order->customerPhone,
+                'redirect' => route('store.order', ['slug' => $slug, 'ref' => $ref]),
+                'title' => $config->storeName,
+                'description' => 'Order '.$order->paymentRef,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Flutterwave checkout link failed', ['order' => $order->paymentRef, 'error' => $e->getMessage()]);
+
+            return back()->withErrors(['payment' => 'We could not open the payment page: '.$e->getMessage()]);
+        }
+
+        return redirect()->away($link);
+    }
+
+    public function order(Request $request, string $slug, string $ref, Flutterwave $flutterwave, SaleRecorder $sales, BillingService $billing): View
     {
         [$tenant, $config] = $this->store($slug);
         $order = Order::query()->where('tenantId', $tenant->id)->where('paymentRef', $ref)->firstOrFail();
 
-        if ($order->status === 'PENDING' && $flutterwave->ready()) {
+        if ($order->status === 'PENDING' && $flutterwave->ready() && ! in_array($request->query('status'), ['cancelled', 'failed'], true)) {
             try {
-                $payment = $flutterwave->verify($ref);
-                if ($flutterwave->successful($payment['status'] ?? null)) {
-                    $order = $sales->completePending($order, (string) ($payment['id'] ?? $ref));
+                $transactionId = (string) $request->query('transaction_id', '');
+                $payment = $transactionId !== ''
+                    ? $flutterwave->verifyTransaction($transactionId)
+                    : $flutterwave->verifyByReference((string) $request->query('tx_ref', $ref));
+                if (Flutterwave::baseReference((string) ($payment['tx_ref'] ?? '')) === $ref) {
+                    $billing->settlePayment($payment, $flutterwave, $sales);
+                    $order->refresh();
                 }
             } catch (\Throwable) {
-                // The customer can refresh after Flutterwave finishes.
+                // Not paid yet, or Flutterwave is still processing; the webhook settles it when it lands.
             }
         }
 

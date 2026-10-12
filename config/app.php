@@ -125,4 +125,17 @@ return [
 
     'scheduler_token' => env('SCHEDULER_TOKEN', ''),
 
+    /*
+    | Issuer details printed on subscription invoices.
+    */
+    'company' => [
+        'name' => env('COMPANY_NAME', 'The Town Growers Hub Ltd'),
+        'address' => env('COMPANY_ADDRESS'),
+        'email' => env('COMPANY_EMAIL', 'hello@salesdock.ng'),
+        'phone' => env('COMPANY_PHONE'),
+        'rc' => env('COMPANY_RC'),
+        'tin' => env('COMPANY_TIN'),
+        'website' => env('COMPANY_WEBSITE', 'salesdock.ng'),
+    ],
+
 ];

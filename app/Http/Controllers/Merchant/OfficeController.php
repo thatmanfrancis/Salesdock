@@ -1707,6 +1707,19 @@ class OfficeController extends MerchantController
 
     public function invoice(BillingInvoice $invoice)
     {
+        return view('merchant.invoice', $this->invoiceData($invoice));
+    }
+
+    public function invoiceDocument(BillingInvoice $invoice)
+    {
+        return view('merchant.invoice-document', $this->invoiceData($invoice));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function invoiceData(BillingInvoice $invoice): array
+    {
         abort_unless($invoice->tenantId === $this->tenantId(), 404);
 
         $plan = null;
@@ -1717,10 +1730,20 @@ class OfficeController extends MerchantController
             $plan = Plan::query()->whereKey($invoice->gatewayRef)->first();
         }
 
-        return view('merchant.invoice', [
+        $tenant = Tenant::query()->findOrFail($this->tenantId());
+        $owner = User::query()
+            ->where('tenantId', $tenant->id)
+            ->whereHas('role', fn ($query) => $query->where('name', 'Owner'))
+            ->orderBy('createdAt')
+            ->first();
+
+        return [
             'invoice' => $invoice,
-            'tenant' => Tenant::query()->findOrFail($this->tenantId()),
+            'tenant' => $tenant,
+            'ownerName' => $owner?->name,
             'plan' => $plan,
+            'company' => config('app.company'),
+            'docHash' => 'DOC-'.strtoupper(substr(hash('sha256', $invoice->id.'|'.$invoice->status.'|'.config('app.key')), 0, 16)),
             'canChange' => $this->changesBilling(),
             'cycles' => [
                 'MONTHLY' => 'Monthly',
@@ -1734,7 +1757,7 @@ class OfficeController extends MerchantController
                 'REFUNDED' => 'Refunded',
                 'WAIVED' => 'Waived',
             ],
-        ]);
+        ];
     }
 
     public function choosePlan(Request $request, Flutterwave $flutterwave)

@@ -1081,7 +1081,7 @@ a { color: var(--green); }
 
 .app .card.orders td a { color: #15803d; font-weight: 600; text-decoration: none; }
 
-.app .invoice-actions { padding: 0 1rem 1rem; }
+.app .invoice-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.6rem; max-width: 860px; margin: 0 auto 1rem; }
 
 .app .csv-file .shot { width: 3rem; height: 3rem; object-fit: cover; border-radius: 0.6rem; }
 
@@ -4472,3 +4472,30 @@ a { color: var(--green); }
 @media (max-width: 768px) {
   input, select, textarea { font-size: 16px !important; }
 }
+
+/* Payment result + plan tour modal */
+.app .pay-result { z-index: 60; }
+.app .pay-result .ui-modal-sheet { width: min(30rem, 100%); padding: 1.5rem; }
+.app .pay-panel { display: grid; gap: 0.7rem; justify-items: center; text-align: center; }
+.app .pay-panel[hidden] { display: none; }
+.app .pay-panel h2 { margin: 0; font-size: 1.25rem; }
+.app .pay-panel p { margin: 0; }
+.app .pay-icon { display: grid; place-items: center; width: 3.5rem; height: 3.5rem; border-radius: 50%; }
+.app .pay-icon.ok { color: #fff; background: #16a34a; box-shadow: 0 0 0 8px #dcfce7; }
+.app .pay-icon.bad { color: #fff; background: #dc2626; box-shadow: 0 0 0 8px #fee2e2; }
+.app .pay-icon.tour { color: #16a34a; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; }
+.app .pay-icon.tour svg { width: 26px; height: 26px; }
+.app .pay-limits { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.4rem; margin: 0.2rem 0; padding: 0; list-style: none; }
+.app .pay-limits li { padding: 0.2rem 0.6rem; color: #166534; font-size: 0.78rem; font-weight: 600; background: #dcfce7; border-radius: 4px; }
+.app .pay-count { color: #6b7280; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.app .pay-open { color: #15803d; font-size: 0.85rem; font-weight: 600; text-decoration: none; }
+.app .pay-open:hover { text-decoration: underline; }
+.app .pay-dots { display: flex; gap: 0.35rem; }
+.app .pay-dots span { width: 0.45rem; height: 0.45rem; background: #e5e7eb; border-radius: 50%; }
+.app .pay-dots span.on { width: 1.2rem; background: #16a34a; border-radius: 4px; }
+.app .pay-result .ui-modal-actions { justify-self: stretch; justify-content: center; margin-top: 0.4rem; }
+.app .pay-result .ui-modal-actions button,
+.app .pay-result .ui-modal-actions .btn { min-width: 7.5rem; padding: 0.55rem 1rem; font-size: 0.85rem; border-radius: 6px; }
+.app .pay-result .ui-modal-actions button { color: #374151; background: #fff; border: 1px solid #e5e7eb; cursor: pointer; }
+.app .pay-result .ui-modal-actions button.primary { color: #fff; background: #16a34a; border-color: #16a34a; }
+.app .pay-result .ui-modal-actions .btn.ghost { color: #374151; background: #fff; border: 1px solid #e5e7eb; }

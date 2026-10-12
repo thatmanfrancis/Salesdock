@@ -151,6 +151,8 @@
         @include('partials.profile-prompt')
     @endif
 
+    @include('partials.payment-result')
+
     {{-- Sign out confirmation modal --}}
     <div class="ui-modal" id="signout-modal" hidden>
         <button type="button" class="ui-filter-backdrop" id="signout-backdrop" aria-label="Close"></button>

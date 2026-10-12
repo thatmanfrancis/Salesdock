@@ -56,6 +56,7 @@ Route::view('/registration-received', 'auth.received')->name('registration-recei
 Route::get('/select-plan', [SelectPlanController::class, 'create'])->middleware('throttle:auth-token')->name('select-plan');
 Route::post('/select-plan', [SelectPlanController::class, 'store'])->middleware('throttle:auth-token')->name('select-plan.store');
 Route::get('/pay/{invoice}', [PaymentController::class, 'checkout'])->name('billing.checkout');
+Route::post('/pay/{invoice}/start', [PaymentController::class, 'start'])->middleware('throttle:10,1')->name('billing.start');
 Route::get('/billing/verify', [PaymentController::class, 'verify'])->name('billing.verify');
 Route::post('/billing/webhook', [PaymentController::class, 'webhook'])->name('billing.webhook');
 
@@ -81,6 +82,7 @@ Route::prefix('store/{slug}')->group(function () {
     Route::get('/checkout', [StorefrontController::class, 'checkoutForm'])->name('store.checkout');
     Route::post('/checkout', [StorefrontController::class, 'checkout'])->name('store.checkout.store');
     Route::get('/pay/{ref}', [StorefrontController::class, 'pay'])->name('store.pay');
+    Route::post('/pay/{ref}/start', [StorefrontController::class, 'startPayment'])->middleware('throttle:10,1')->name('store.pay.start');
     Route::get('/orders/{ref}', [StorefrontController::class, 'order'])->name('store.order');
 });
 
@@ -209,6 +211,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/billing', [OfficeController::class, 'billing'])->name('billing');
         Route::post('/billing', [OfficeController::class, 'choosePlan'])->name('billing.choose');
         Route::get('/billing/invoices/{invoice}/view', [OfficeController::class, 'invoice'])->name('billing.invoice');
+        Route::get('/billing/invoices/{invoice}/document', [OfficeController::class, 'invoiceDocument'])->name('billing.invoice.document');
         Route::get('/billing/invoices/{invoice}', [PaymentController::class, 'pay'])->name('billing.pay');
         Route::get('/account', [OfficeController::class, 'account'])->name('account');
         Route::get('/account/loyalty', [OfficeController::class, 'loyalty'])->name('account.loyalty');

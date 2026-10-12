@@ -20,9 +20,9 @@ class Turnstile
 
     private const PASS_KEY = 'turnstile_pass';
 
-    private const PASS_MINUTES = 10;
+    private const PASS_MINUTES = 30;
 
-    private const PASS_USES = 5;
+    private const PASS_USES = 10;
 
     public static function enabled(): bool
     {
@@ -65,6 +65,7 @@ class Turnstile
 
         $token = $request->input('cf-turnstile-response');
         if (! is_string($token) || $token === '' || strlen($token) > 2048) {
+            Log::warning('Turnstile token missing from form', ['action' => $action, 'ip' => $request->ip()]);
             $fail();
         }
 
@@ -74,28 +75,36 @@ class Turnstile
                 'response' => $token,
                 'remoteip' => $request->ip(),
             ]);
-            $result = $response->successful() ? $response->json() : null;
         } catch (Throwable $exception) {
+            $response = null;
             Log::warning('Turnstile siteverify unreachable', ['error' => $exception->getMessage()]);
-            $result = null;
         }
 
+        // A Cloudflare outage must not lock everyone out; rate limits and lockouts still guard these forms.
+        if ($response === null || $response->serverError()) {
+            Log::warning('Turnstile skipped: siteverify unavailable', ['action' => $action, 'status' => $response?->status()]);
+
+            return;
+        }
+
+        $result = $response->json();
         if (! is_array($result) || ($result['success'] ?? false) !== true) {
-            Log::notice('Turnstile check failed', ['action' => $action, 'ip' => $request->ip(), 'codes' => $result['error-codes'] ?? ['no-response']]);
+            Log::warning('Turnstile check failed', ['action' => $action, 'ip' => $request->ip(), 'codes' => $result['error-codes'] ?? ['bad-response']]);
             $fail();
         }
 
-        $hostnames = self::expectedHostnames();
-        if ($hostnames !== []) {
-            if (($result['action'] ?? null) !== $action || ! in_array(strtolower((string) ($result['hostname'] ?? '')), $hostnames, true)) {
-                Log::notice('Turnstile token action or hostname mismatch', [
-                    'action' => $action,
-                    'tokenAction' => $result['action'] ?? null,
-                    'tokenHostname' => $result['hostname'] ?? null,
-                    'expected' => $hostnames,
-                ]);
-                $fail();
-            }
+        $tokenHostname = strtolower((string) ($result['hostname'] ?? ''));
+        if (! in_array($tokenHostname, self::expectedHostnames($request), true)) {
+            Log::warning('Turnstile token solved on another hostname', [
+                'action' => $action,
+                'tokenHostname' => $tokenHostname,
+                'expected' => self::expectedHostnames($request),
+            ]);
+            $fail();
+        }
+
+        if (($result['action'] ?? $action) !== $action) {
+            Log::info('Turnstile token action differs from form', ['action' => $action, 'tokenAction' => $result['action']]);
         }
 
         session()->put(self::PASS_KEY, [
@@ -118,14 +127,19 @@ class Turnstile
     }
 
     /**
-     * TURNSTILE_HOSTNAMES as clean hostnames; entries like "https://salesdock.ng/" are normalised and
-     * anything that is not a hostname is ignored (and logged) so a typo cannot block every sign-in.
+     * Hostnames a token may be solved on: the site being visited and APP_URL, plus TURNSTILE_HOSTNAMES.
+     * Entries like "https://salesdock.ng/" are normalised and anything that is not a hostname is ignored
+     * (and logged) so a typo cannot block every sign-in. Cloudflare's test keys report "example.com".
      *
      * @return list<string>
      */
-    private static function expectedHostnames(): array
+    private static function expectedHostnames(Request $request): array
     {
-        $hostnames = [];
+        $hostnames = array_filter([
+            strtolower($request->getHost()),
+            strtolower((string) parse_url((string) config('app.url'), PHP_URL_HOST)),
+            preg_match('/^[1-3]x0{10}/', (string) config('services.turnstile.site_key')) ? 'example.com' : null,
+        ]);
         foreach (explode(',', (string) config('services.turnstile.hostnames')) as $entry) {
             $host = strtolower(trim($entry));
             if ($host === '') {
