@@ -82,6 +82,7 @@ class TenantProvisioner
                 'roleId' => $owner->id,
                 'name' => $registration->ownerName,
                 'email' => $registration->email,
+                'phone' => $registration->phone,
                 'passwordHash' => $registration->passwordHash,
                 'isActive' => true,
             ]);

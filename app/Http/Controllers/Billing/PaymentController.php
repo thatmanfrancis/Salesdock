@@ -2,12 +2,13 @@
 
 namespace App\Http\Controllers\Billing;
 
+use App\Contracts\PaymentGateway;
 use App\Http\Controllers\Controller;
 use App\Models\BillingInvoice;
 use App\Models\Tenant;
 use App\Models\WebhookEvent;
 use App\Services\BillingService;
-use App\Services\Flutterwave;
+use App\Services\PaymentManager;
 use App\Services\SaleRecorder;
 use App\Support\PlanTour;
 use Illuminate\Http\Request;
@@ -16,35 +17,40 @@ use Illuminate\Support\Facades\Log;
 
 class PaymentController extends Controller
 {
-    public function checkout(string $invoice, Flutterwave $flutterwave)
+    public function checkout(string $invoice, PaymentManager $payments)
     {
         $record = BillingInvoice::query()->where('invoiceNumber', $invoice)->where('status', 'PENDING')->firstOrFail();
+        $gateway = $payments->active();
 
         return view('billing.pay', [
             'invoice' => $record,
-            'ready' => $flutterwave->ready(),
+            'ready' => $gateway->ready(),
+            'gatewayLabel' => $gateway->label(),
         ]);
     }
 
-    public function pay(BillingInvoice $invoice, Flutterwave $flutterwave)
+    public function pay(BillingInvoice $invoice, PaymentManager $payments)
     {
         abort_unless($invoice->tenantId === $this->user()->tenantId, 404);
         abort_unless($invoice->status === 'PENDING', 404);
+        $gateway = $payments->active();
 
         return view('billing.pay', [
             'invoice' => $invoice,
-            'ready' => $flutterwave->ready(),
+            'ready' => $gateway->ready(),
+            'gatewayLabel' => $gateway->label(),
         ]);
     }
 
-    public function start(string $invoice, Flutterwave $flutterwave)
+    public function start(string $invoice, PaymentManager $payments)
     {
         $record = BillingInvoice::query()->where('invoiceNumber', $invoice)->where('status', 'PENDING')->firstOrFail();
         $tenant = Tenant::query()->findOrFail($record->tenantId);
         $user = Auth::user();
+        $gateway = $payments->active();
 
         try {
-            $link = $flutterwave->checkoutLink([
+            $link = $gateway->checkoutLink([
                 'reference' => $record->invoiceNumber,
                 'amount' => (float) $record->amount,
                 'email' => $user?->tenantId === $tenant->id ? $user->email : $tenant->email,
@@ -54,7 +60,7 @@ class PaymentController extends Controller
                 'description' => 'Subscription '.$record->invoiceNumber,
             ]);
         } catch (\Throwable $e) {
-            Log::warning('Flutterwave checkout link failed', ['invoice' => $record->invoiceNumber, 'error' => $e->getMessage()]);
+            Log::warning($gateway->label().' checkout link failed', ['invoice' => $record->invoiceNumber, 'error' => $e->getMessage()]);
 
             return back()->withErrors(['payment' => 'We could not open the payment page: '.$e->getMessage()]);
         }
@@ -62,11 +68,12 @@ class PaymentController extends Controller
         return redirect()->away($link);
     }
 
-    public function verify(Request $request, Flutterwave $flutterwave, BillingService $billing, SaleRecorder $sales)
+    public function verify(Request $request, PaymentManager $payments, BillingService $billing, SaleRecorder $sales)
     {
-        $ref = (string) $request->query('ref');
+        $ref = (string) $request->query('ref', $request->query('reference', ''));
         abort_unless($ref !== '', 404);
         $back = Auth::check() ? 'billing' : 'login';
+        $gateway = $payments->active();
 
         if (in_array($request->query('status'), ['cancelled', 'failed'], true)) {
             $cancelled = $request->query('status') === 'cancelled';
@@ -77,15 +84,12 @@ class PaymentController extends Controller
         }
 
         try {
-            $transactionId = (string) $request->query('transaction_id', '');
-            $payment = $transactionId !== ''
-                ? $flutterwave->verifyTransaction($transactionId)
-                : $flutterwave->verifyByReference((string) $request->query('tx_ref', $ref));
+            $payment = $this->resolvePayment($request, $gateway, $ref);
         } catch (\Throwable $e) {
             return $this->failed($ref, $back, 'failed', 'We could not confirm the payment yet: '.$e->getMessage().' If you were charged, it will update automatically within a few minutes.');
         }
 
-        if (Flutterwave::baseReference((string) ($payment['tx_ref'] ?? '')) !== $ref || $billing->settlePayment($payment, $flutterwave, $sales) === null) {
+        if ($gateway->baseReference((string) ($payment['tx_ref'] ?? '')) !== $ref || $billing->settlePayment($payment, $gateway, $sales) === null) {
             return $this->failed($ref, $back, 'failed', 'Payment did not complete. You can try the same invoice again.');
         }
 
@@ -110,15 +114,24 @@ class PaymentController extends Controller
         return $this->returnTo($ref, $back);
     }
 
-    public function webhook(Request $request, Flutterwave $flutterwave, BillingService $billing, SaleRecorder $sales)
+    public function webhook(Request $request, PaymentManager $payments, BillingService $billing, SaleRecorder $sales)
     {
-        if (! $flutterwave->webhookTrusted($request->header('verif-hash'))) {
+        return $this->handleWebhook($request, $payments->driver('flutterwave'), $billing, $sales);
+    }
+
+    public function webhookPaystack(Request $request, PaymentManager $payments, BillingService $billing, SaleRecorder $sales)
+    {
+        return $this->handleWebhook($request, $payments->driver('paystack'), $billing, $sales);
+    }
+
+    private function handleWebhook(Request $request, PaymentGateway $gateway, BillingService $billing, SaleRecorder $sales)
+    {
+        if (! $gateway->webhookTrusted($request)) {
             return response('invalid signature', 401);
         }
 
         $payload = $request->json()->all();
-        $transactionId = (string) ($payload['data']['id'] ?? $payload['id'] ?? '');
-        $reference = (string) ($payload['data']['tx_ref'] ?? $payload['txRef'] ?? '');
+        [$transactionId, $reference] = $this->webhookIds($gateway, $payload);
         if ($transactionId === '' && $reference === '') {
             return response('missing reference', 422);
         }
@@ -126,7 +139,7 @@ class PaymentController extends Controller
         $event = WebhookEvent::query()->firstOrCreate(
             ['reference' => $transactionId !== '' ? $transactionId : $reference],
             [
-                'gateway' => 'flutterwave',
+                'gateway' => $gateway->name(),
                 'eventType' => (string) ($payload['event'] ?? $payload['event.type'] ?? 'charge.completed'),
                 'payload' => $payload,
                 'createdAt' => now(),
@@ -138,11 +151,11 @@ class PaymentController extends Controller
         }
 
         try {
-            $payment = ctype_digit($transactionId)
-                ? $flutterwave->verifyTransaction($transactionId)
-                : $flutterwave->verifyByReference($reference);
-            if ($flutterwave->successful($payment['status'] ?? null)) {
-                $billing->settlePayment($payment, $flutterwave, $sales);
+            $payment = $transactionId !== ''
+                ? $gateway->verifyTransaction($transactionId)
+                : $gateway->verifyByReference($reference);
+            if ($gateway->successful($payment['status'] ?? null)) {
+                $billing->settlePayment($payment, $gateway, $sales);
             }
             $event->forceFill(['processed' => true, 'processedAt' => now()])->save();
         } catch (\Throwable $e) {
@@ -152,6 +165,38 @@ class PaymentController extends Controller
         }
 
         return response('ok');
+    }
+
+    /**
+     * @return array{0: string, 1: string}
+     */
+    private function webhookIds(PaymentGateway $gateway, array $payload): array
+    {
+        if ($gateway->name() === 'paystack') {
+            $data = is_array($payload['data'] ?? null) ? $payload['data'] : [];
+
+            return [
+                (string) ($data['id'] ?? ''),
+                (string) ($data['reference'] ?? ''),
+            ];
+        }
+
+        return [
+            (string) ($payload['data']['id'] ?? $payload['id'] ?? ''),
+            (string) ($payload['data']['tx_ref'] ?? $payload['txRef'] ?? ''),
+        ];
+    }
+
+    private function resolvePayment(Request $request, PaymentGateway $gateway, string $ref): array
+    {
+        $transactionId = (string) $request->query('transaction_id', '');
+        if ($transactionId !== '') {
+            return $gateway->verifyTransaction($transactionId);
+        }
+
+        $txRef = (string) $request->query('tx_ref', $request->query('reference', $request->query('trxref', $ref)));
+
+        return $gateway->verifyByReference($txRef !== '' ? $txRef : $ref);
     }
 
     /**

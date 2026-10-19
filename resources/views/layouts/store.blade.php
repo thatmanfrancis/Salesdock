@@ -9,6 +9,7 @@
         <meta name="description" content="{{ $config->metaDescription }}">
     @endif
     @include('partials.favicon')
+    @include('partials.google-analytics')
     <link rel="preconnect" href="https://fonts.bunny.net">
     <link href="https://fonts.bunny.net/css?family=space-grotesk:400,500,600,700" rel="stylesheet">
     <link rel="stylesheet" href="{{ asset('css/salesdock.css') }}?v={{ filemtime(public_path('css/salesdock.css')) }}">
@@ -151,5 +152,6 @@
             });
         })();
     </script>
+    @include('partials.support-widgets')
 </body>
 </html>

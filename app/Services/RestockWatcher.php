@@ -10,6 +10,7 @@ use App\Models\Subscription;
 use App\Models\Supplier;
 use App\Models\Tenant;
 use App\Support\AuthMail;
+use App\Support\PhoneNumber;
 use App\Support\PlanFeatures;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -147,8 +148,11 @@ class RestockWatcher
             'createdAt' => now(),
         ]);
 
-        if ($isNew && $tenant->email) {
-            $this->emailOwner($tenant, $supplier, $order, $product, $stockText);
+        if ($isNew) {
+            if ($tenant->email) {
+                $this->emailOwner($tenant, $supplier, $order, $product, $stockText);
+            }
+            $this->notifyWhatsApp($tenant, $supplier, $order, $product, $stockText);
         }
     }
 
@@ -187,5 +191,31 @@ class RestockWatcher
             'label' => 'Review purchase order',
             'note' => 'Other products from '.$supplierName.' that run low will be added to this same draft until you send it.',
         ]));
+    }
+
+    private function notifyWhatsApp(Tenant $tenant, Supplier $supplier, PurchaseOrder $order, Product $product, string $stockText): void
+    {
+        $ref = strtoupper(substr($order->id, -8));
+        $placeholders = [
+            'shop' => (string) $tenant->name,
+            'supplier' => (string) $supplier->name,
+            'product' => (string) $product->name,
+            'stock' => (string) max(0, (int) $product->currentStock),
+            'threshold' => (string) (int) $product->minThreshold,
+            'order_ref' => $ref,
+            'status' => $stockText,
+        ];
+
+        defer(function () use ($tenant, $supplier, $placeholders) {
+            $whatsapp = app(ZohoWhatsApp::class);
+            $ownerPhone = PhoneNumber::e164((string) $tenant->phone);
+            if ($ownerPhone) {
+                $whatsapp->sendRestockAlert($ownerPhone, $placeholders, (string) $tenant->name);
+            }
+            $supplierPhone = PhoneNumber::e164((string) $supplier->contactWhatsapp);
+            if ($supplierPhone) {
+                $whatsapp->sendRestockAlert($supplierPhone, $placeholders, (string) $supplier->name);
+            }
+        });
     }
 }

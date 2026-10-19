@@ -22,7 +22,7 @@
             <strong>Entry #{{ $ref }}</strong>
         </div>
 
-        <div class="order-grid">
+        <div class="order-grid ledger-detail">
             <div class="order-main">
                 <section class="card orders">
                     <p class="kicker band">Line items</p>

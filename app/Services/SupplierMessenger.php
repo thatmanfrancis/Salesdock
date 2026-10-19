@@ -8,11 +8,12 @@ use App\Models\PurchaseOrderItem;
 use App\Models\Supplier;
 use App\Models\Tenant;
 use App\Support\AuthMail;
+use App\Support\PhoneNumber;
 
 class SupplierMessenger
 {
     /**
-     * Channels a supplier can be reached on, in the order they are tried.
+     * Channels a supplier can be reached on.
      *
      * @return list<string>
      */
@@ -22,26 +23,27 @@ class SupplierMessenger
         if ($supplier && filter_var((string) $supplier->contactEmail, FILTER_VALIDATE_EMAIL)) {
             $channels[] = 'email';
         }
+        if ($supplier && PhoneNumber::e164((string) $supplier->contactWhatsapp)) {
+            $channels[] = 'whatsapp';
+        }
 
         return $channels;
     }
 
     /**
-     * Sends the purchase order to the supplier and returns the channel used, or null when nothing went out.
+     * Sends the purchase order on every available channel. Returns a joined label, or null when nothing went out.
      */
     public function sendPurchaseOrder(PurchaseOrder $order, Supplier $supplier, Tenant $tenant): ?string
     {
-        foreach (self::channels($supplier) as $channel) {
-            $sent = match ($channel) {
-                'email' => $this->email($order, $supplier, $tenant),
-                default => false,
-            };
-            if ($sent) {
-                return $channel;
-            }
+        $sent = [];
+        if (in_array('email', self::channels($supplier), true) && $this->email($order, $supplier, $tenant)) {
+            $sent[] = 'email';
+        }
+        if (in_array('whatsapp', self::channels($supplier), true) && $this->whatsapp($order, $supplier, $tenant)) {
+            $sent[] = 'whatsapp';
         }
 
-        return null;
+        return $sent === [] ? null : implode('+', $sent);
     }
 
     private function email(PurchaseOrder $order, Supplier $supplier, Tenant $tenant): bool
@@ -87,6 +89,31 @@ class SupplierMessenger
                 'signoff' => $shop,
             ],
             replyTo: ['address' => (string) $tenant->email, 'name' => $shop],
+        );
+    }
+
+    private function whatsapp(PurchaseOrder $order, Supplier $supplier, Tenant $tenant): bool
+    {
+        $ref = strtoupper(substr($order->id, -8));
+        $items = PurchaseOrderItem::query()->where('purchaseOrderId', $order->id)->orderBy('createdAt')->get();
+        $products = Product::query()->whereIn('id', $items->pluck('productId'))->get(['id', 'name'])->keyBy('id');
+        $lines = [];
+        foreach ($items as $item) {
+            $name = $products->get($item->productId)?->name ?: 'Item';
+            $lines[] = $item->quantityOrdered.' × '.$name;
+        }
+
+        return app(ZohoWhatsApp::class)->sendPurchaseOrder(
+            (string) $supplier->contactWhatsapp,
+            [
+                'shop' => (string) $tenant->name,
+                'supplier' => (string) $supplier->name,
+                'order_ref' => $ref,
+                'items' => implode(', ', $lines),
+                'total' => '₦'.number_format((float) $order->totalCost, 2),
+                'owner_phone' => (string) ($tenant->phone ?: ''),
+            ],
+            (string) $supplier->name,
         );
     }
 }

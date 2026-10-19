@@ -33,6 +33,7 @@
     </script>
     @endverbatim
     @include('partials.favicon')
+    @include('partials.google-analytics')
     <link rel="preconnect" href="https://fonts.bunny.net">
     <link href="https://fonts.bunny.net/css?family=space-grotesk:400,500,600,700" rel="stylesheet">
     <link rel="stylesheet" href="{{ asset('css/salesdock.css') }}?v={{ filemtime(public_path('css/salesdock.css')) }}">
@@ -604,5 +605,6 @@
 </footer>
 
 <script src="{{ asset('js/home.js') }}?v={{ filemtime(public_path('js/home.js')) }}"></script>
+@include('partials.support-widgets')
 </body>
 </html>

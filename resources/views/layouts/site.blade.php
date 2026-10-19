@@ -7,6 +7,7 @@
     <meta name="description" content="@yield('description', 'POS, inventory and online store software for Nigerian retailers.')">
     <link rel="canonical" href="{{ url()->current() }}">
     @include('partials.favicon')
+    @include('partials.google-analytics')
     <link rel="preconnect" href="https://fonts.bunny.net">
     <link href="https://fonts.bunny.net/css?family=space-grotesk:400,500,600,700" rel="stylesheet">
     <style>
@@ -139,5 +140,6 @@
             }
         });
     </script>
+    @include('partials.support-widgets')
 </body>
 </html>

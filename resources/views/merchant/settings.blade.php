@@ -182,19 +182,22 @@
                                 <span>Guests can order without an account</span>
                                 <input type="checkbox" name="allowGuestOrder" value="1" @checked($guests)>
                             </label>
-                            <p class="kicker">Bank transfer</p>
+                            <p class="kicker">Payout account</p>
+                            <p class="hint">Online store card payments settle to this account via {{ $gatewayLabel ?? 'the payment gateway' }}. SalesDock keeps a {{ number_format((float) ($platformSplitPercent ?? 1.5), 1) }}% service fee. Low-stock WhatsApp alerts use your shop phone and each supplier’s WhatsApp number.</p>
+                            @if ($payoutConnected ?? false)
+                                <p class="muted">Payouts are connected.</p>
+                            @endif
                             <div class="settings-grid">
+                                <div class="wide">
+                                    <x-ui.select name="bankCode" label="Bank" :value="old('bankCode', $store->bankCode)" :options="['' => 'Choose your bank'] + ($banks ?? [])" required />
+                                </div>
                                 <label>
-                                    <span>Bank</span>
-                                    <input name="bankName" value="{{ old('bankName', $store->bankName) }}" placeholder="Bank name">
+                                    <span>Account number <span class="req">*</span></span>
+                                    <input name="bankAccount" value="{{ old('bankAccount', $store->bankAccount) }}" placeholder="0123456789" inputmode="numeric" required maxlength="20">
                                 </label>
                                 <label>
-                                    <span>Account number</span>
-                                    <input name="bankAccount" value="{{ old('bankAccount', $store->bankAccount) }}" placeholder="0123456789" inputmode="numeric">
-                                </label>
-                                <label class="wide">
                                     <span>Account name</span>
-                                    <input name="accountName" value="{{ old('accountName', $store->accountName) }}" placeholder="Name on the account">
+                                    <input name="accountName" value="{{ old('accountName', $store->accountName) }}" placeholder="Confirmed from your bank when possible" maxlength="255">
                                 </label>
                             </div>
                             <div class="ui-modal-actions">

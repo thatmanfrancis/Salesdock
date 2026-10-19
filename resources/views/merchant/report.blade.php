@@ -3,8 +3,7 @@
 <head>
     <meta charset="utf-8">
     <title>{{ $title }} | SalesDock</title>
-    <link rel="icon" href="{{ asset('salesdockfavicon.png') }}?v={{ filemtime(public_path('salesdockfavicon.png')) }}" type="image/png" sizes="32x32">
-    <link rel="apple-touch-icon" href="{{ asset('salesdockfavicon.png') }}?v={{ filemtime(public_path('salesdockfavicon.png')) }}">
+    @include('partials.favicon')
     <link rel="preconnect" href="https://fonts.bunny.net">
     <link href="https://fonts.bunny.net/css?family=space-grotesk:400,500,600,700" rel="stylesheet">
     <style>

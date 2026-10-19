@@ -3104,17 +3104,18 @@ a { color: var(--green); }
 
 .sf-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(10.25rem, 1fr));
-  gap: 0.85rem;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.75rem;
 }
 
 .sf-card {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   overflow: hidden;
   background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 0.85rem;
+  border: 1px solid #6b7280;
+  border-radius: 0.75rem;
   transition: box-shadow 0.15s ease, transform 0.15s ease;
 }
 
@@ -3125,7 +3126,9 @@ a { color: var(--green); }
 
 .sf-card-media {
   display: block;
-  aspect-ratio: 5 / 4;
+  flex-shrink: 0;
+  width: 100%;
+  height: 8.5rem;
   background: #f3f4f6;
   overflow: hidden;
 }
@@ -3159,14 +3162,15 @@ a { color: var(--green); }
 }
 
 .sf-card-body a {
-  display: -webkit-box;
+  display: block;
+  min-width: 0;
   overflow: hidden;
   color: #111827;
   font-size: 0.9rem;
   font-weight: 600;
   line-height: 1.25;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .sf-card-body strong {
@@ -3558,7 +3562,15 @@ a { color: var(--green); }
 
 .app .pos-cats button.on { color: #fff; background: #22c55e; }
 
-.app .pos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 9.5rem)); justify-content: start; gap: 0.75rem; align-content: start; flex: 1; overflow: auto; padding: 0.75rem; }
+.app .pos-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.75rem;
+  align-content: start;
+  flex: 1;
+  overflow: auto;
+  padding: 0.75rem;
+}
 
 .app .pos-grid.is-empty { display: flex; align-items: center; justify-content: center; }
 
@@ -3567,7 +3579,8 @@ a { color: var(--green); }
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  width: 9.5rem;
+  width: 100%;
+  min-width: 0;
   box-sizing: border-box;
   padding: 0.65rem;
   text-align: left;
@@ -3576,39 +3589,39 @@ a { color: var(--green); }
   border: 1px solid #f3f4f6;
   border-radius: 0.75rem;
   cursor: pointer;
+  overflow: hidden;
 }
 
 .app .pos-product.in { border-color: #4ade80; box-shadow: 0 0 0 1px #4ade80; }
 
 .app .pos-product:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.app .pos-product strong,
+.app .pos-product em,
+.app .pos-product b {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .app .pos-product strong {
   color: #1f2937;
   font-size: 0.75rem;
   line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: block;
 }
 
 .app .pos-product em {
   color: #9ca3af;
   font-size: 0.65rem;
   font-style: normal;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: block;
 }
 
 .app .pos-product b {
   color: #16a34a;
   font-size: 0.875rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: block;
 }
 
 .app .pos-product small { color: #f87171; font-size: 0.65rem; display: block; }
@@ -4003,6 +4016,7 @@ a { color: var(--green); }
   .app .pos { flex-direction: column; }
   .app .pos-ticket { width: 100%; max-height: 46%; }
   .app .pos-catalog { min-height: 0; }
+  .app .pos-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
   .app .crumbs { padding-inline: 1rem; }
   .app .page-head { align-items: flex-start; flex-direction: column; }
@@ -4067,6 +4081,7 @@ a { color: var(--green); }
   .app .card.orders table { min-width: 42rem; }
   .app .product-fields, .app .bulk, .app .page .card form.catalogue-row, .app .ui-modal-grid, .app .supplier-facts, .app .settings-grid { grid-template-columns: 1fr; }
   .app .order-grid, .app .po-line, .app .settings, .app .profile-layout { grid-template-columns: 1fr; }
+  .app .order-grid.ledger-detail .order-side { order: -1; }
   .app .settings-nav { grid-auto-flow: column; justify-content: start; overflow-x: auto; }
   .app .settings-nav a { white-space: nowrap; }
 }
@@ -4499,3 +4514,72 @@ a { color: var(--green); }
 .app .pay-result .ui-modal-actions button { color: #374151; background: #fff; border: 1px solid #e5e7eb; cursor: pointer; }
 .app .pay-result .ui-modal-actions button.primary { color: #fff; background: #16a34a; border-color: #16a34a; }
 .app .pay-result .ui-modal-actions .btn.ghost { color: #374151; background: #fff; border: 1px solid #e5e7eb; }
+
+/* Admin catalogue bulk / CSV modals */
+.app .catalogue-bulk { display: grid; gap: 0.85rem; max-height: min(55vh, 28rem); overflow: auto; padding-right: 0.15rem; }
+.app .catalogue-bulk-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: 0.55rem;
+  padding: 0.75rem;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+.app .catalogue-bulk-row .wide { grid-column: 1 / -1; }
+.app .catalogue-cat-bulk { display: grid; gap: 0.55rem; max-height: min(50vh, 22rem); overflow: auto; }
+.app .ui-modal-sheet.wide { width: min(42rem, 100%); }
+.app button.quiet[data-bulk-add],
+.app button.quiet[data-cat-add] {
+  justify-self: start;
+  color: #15803d;
+  background: #fff;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+@media (max-width: 700px) {
+  .app .catalogue-bulk-row { grid-template-columns: 1fr; }
+}
+
+/* Starter pack how-to */
+.app .starter-howto {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0 0 1.25rem;
+  padding: 1rem;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+}
+.app .starter-howto h2 { margin: 0; font-size: 0.95rem; color: #166534; }
+.app .starter-howto ol { margin: 0; padding-left: 1.2rem; color: #374151; font-size: 0.875rem; }
+.app .starter-howto li { margin: 0.25rem 0; }
+.app .starter-howto .muted { margin: 0; }
+
+/* Modal tabs (catalogue add item / category) */
+.app .modal-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 0.85rem;
+  padding: 0.25rem;
+  background: #f3f4f6;
+  border-radius: 6px;
+}
+.app .modal-tabs[hidden] { display: none; }
+.app .modal-tabs button {
+  flex: 1 1 auto;
+  padding: 0.45rem 0.7rem;
+  color: #4b5563;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.app .modal-tabs button.on { color: #fff; background: #16a34a; }
+.app .ui-modal-sheet [data-panel] { display: grid; gap: 0.9rem; }
+.app .ui-modal-sheet [data-panel][hidden] { display: none; }

@@ -68,7 +68,7 @@
                     </div>
                     <div class="text-center">
                         <button type="submit" data-plan-submit data-loading="Please wait…" disabled class="rounded-2xl bg-green-500 px-10 py-4 text-base font-bold text-white shadow-lg shadow-green-200 hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-60">Select a plan to continue</button>
-                        <p data-pay-note class="mt-3 hidden text-xs text-gray-400">Secured by Flutterwave · Bank Transfer, Card &amp; USSD supported</p>
+                        <p data-pay-note class="mt-3 hidden text-xs text-gray-400">Secured by {{ $gatewayLabel ?? 'our payment partner' }} · Bank Transfer, Card &amp; USSD supported</p>
                     </div>
                 </form>
                 <script>

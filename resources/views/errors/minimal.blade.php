@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
     <title>@yield('title') | SalesDock</title>
     @include('partials.favicon')
+    @include('partials.google-analytics')
     <link rel="preconnect" href="https://fonts.bunny.net">
     <link href="https://fonts.bunny.net/css?family=space-grotesk:400,500,600,700" rel="stylesheet">
     <link rel="stylesheet" href="{{ asset('css/salesdock.css') }}">

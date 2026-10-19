@@ -40,7 +40,7 @@
                     @endif
                 </a>
                 <div class="sf-card-body">
-                    <a href="{{ route('store.product', [$tenant->slug, $product]) }}">{{ $product->name }}</a>
+                    <a href="{{ route('store.product', [$tenant->slug, $product]) }}" title="{{ $product->name }}">{{ $product->name }}</a>
                     <strong>₦{{ number_format($product->price, 2) }}</strong>
                     @if ($product->isDiscounted && $product->originalPrice)
                         <span class="sf-was">₦{{ number_format($product->originalPrice, 2) }}</span>

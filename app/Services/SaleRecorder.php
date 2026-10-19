@@ -9,6 +9,7 @@ use App\Models\Hold;
 use App\Models\Notification;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\PlatformSetting;
 use App\Models\Product;
 use App\Models\SalesLedger;
 use App\Models\SalesLedgerItem;
@@ -138,7 +139,9 @@ class SaleRecorder
             $transaction = Transaction::query()->create([
                 'orderId' => $order->id,
                 'tenantId' => $tenantId,
-                'gateway' => $method === 'CARD' ? 'FLUTTERWAVE' : ($method === 'TRANSFER' ? 'TRANSFER' : 'CASH'),
+                'gateway' => $method === 'CARD'
+                    ? strtoupper((string) (PlatformSetting::payment()['provider'] ?? 'CARD'))
+                    : ($method === 'TRANSFER' ? 'TRANSFER' : 'CASH'),
                 'method' => $method,
                 'amount' => $netAmount,
                 'status' => $complete ? 'SUCCESS' : 'PENDING',

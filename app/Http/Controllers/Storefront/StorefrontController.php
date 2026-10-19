@@ -5,11 +5,12 @@ namespace App\Http\Controllers\Storefront;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\PlatformSetting;
 use App\Models\Product;
 use App\Models\StorefrontConfig;
 use App\Models\Tenant;
 use App\Services\BillingService;
-use App\Services\Flutterwave;
+use App\Services\PaymentManager;
 use App\Services\SaleRecorder;
 use App\Services\StoreCart;
 use App\Support\Turnstile;
@@ -21,9 +22,12 @@ use Illuminate\View\View;
 
 class StorefrontController extends Controller
 {
-    public const SERVICE_RATE = 0.015;
-
     public function __construct(private StoreCart $cart) {}
+
+    private function serviceRate(): float
+    {
+        return max(0.0, min(0.5, (float) PlatformSetting::payment()['platform_split']));
+    }
 
     public function show(Request $request, string $slug): View
     {
@@ -200,11 +204,12 @@ class StorefrontController extends Controller
         return $this->storeView('store.checkout', $tenant, $config, [
             'lines' => $this->cart->lines($tenant->id),
             'subtotal' => $this->cart->subtotal($tenant->id),
-            'serviceRate' => self::SERVICE_RATE,
+            'serviceRate' => $this->serviceRate(),
+            'gatewayLabel' => app(PaymentManager::class)->active()->label(),
         ]);
     }
 
-    public function checkout(Request $request, string $slug, SaleRecorder $sales, Flutterwave $flutterwave)
+    public function checkout(Request $request, string $slug, SaleRecorder $sales, PaymentManager $payments)
     {
         [$tenant, $config] = $this->store($slug);
         Turnstile::verify($request, 'checkout');
@@ -222,6 +227,7 @@ class StorefrontController extends Controller
             throw ValidationException::withMessages(['cart' => 'Add at least one product.']);
         }
 
+        $gateway = $payments->active();
         $order = $sales->sell($tenant->id, $lines, [
             'channel' => 'ONLINE',
             'method' => $data['method'] === 'CARD' ? 'CARD' : 'TRANSFER',
@@ -229,37 +235,45 @@ class StorefrontController extends Controller
             'customerEmail' => $data['customerEmail'],
             'customerPhone' => $data['customerPhone'],
             'customerAddress' => $data['customerAddress'] ?? null,
-            'serviceRate' => $data['method'] === 'CARD' ? self::SERVICE_RATE : 0,
+            'serviceRate' => $data['method'] === 'CARD' ? $this->serviceRate() : 0,
             'complete' => false,
         ]);
 
         $this->cart->clear($tenant->id);
 
-        if ($data['method'] === 'CARD' && $flutterwave->ready()) {
+        if ($data['method'] === 'CARD' && $gateway->ready()) {
             return redirect()->route('store.pay', ['slug' => $slug, 'ref' => $order->paymentRef]);
         }
 
         return redirect()->route('store.order', ['slug' => $slug, 'ref' => $order->paymentRef]);
     }
 
-    public function pay(string $slug, string $ref, Flutterwave $flutterwave): View
+    public function pay(string $slug, string $ref, PaymentManager $payments): View
     {
         [$tenant, $config] = $this->store($slug);
         $order = Order::query()->where('tenantId', $tenant->id)->where('paymentRef', $ref)->firstOrFail();
+        $gateway = $payments->active();
 
         return $this->storeView('store.pay', $tenant, $config, [
             'order' => $order,
-            'ready' => $flutterwave->ready() && $order->status === 'PENDING',
+            'ready' => $gateway->ready() && $order->status === 'PENDING',
+            'gatewayLabel' => $gateway->label(),
         ]);
     }
 
-    public function startPayment(string $slug, string $ref, Flutterwave $flutterwave): RedirectResponse
+    public function startPayment(string $slug, string $ref, PaymentManager $payments): RedirectResponse
     {
         [$tenant, $config] = $this->store($slug);
         $order = Order::query()->where('tenantId', $tenant->id)->where('paymentRef', $ref)->where('status', 'PENDING')->firstOrFail();
+        $gateway = $payments->active();
+        $column = $gateway->subaccountColumn();
 
         try {
-            $link = $flutterwave->checkoutLink([
+            if (! $config->{$column}) {
+                return back()->withErrors(['payment' => 'This shop has not finished setting up payouts yet. Please pay by bank transfer, or ask the shop to add their bank account in Settings.']);
+            }
+
+            $link = $gateway->checkoutLink([
                 'reference' => $order->paymentRef,
                 'amount' => (float) $order->netAmount,
                 'email' => (string) $order->customerEmail,
@@ -268,9 +282,10 @@ class StorefrontController extends Controller
                 'redirect' => route('store.order', ['slug' => $slug, 'ref' => $ref]),
                 'title' => $config->storeName,
                 'description' => 'Order '.$order->paymentRef,
+                'subaccountId' => $config->{$column},
             ]);
         } catch (\Throwable $e) {
-            Log::warning('Flutterwave checkout link failed', ['order' => $order->paymentRef, 'error' => $e->getMessage()]);
+            Log::warning($gateway->label().' checkout link failed', ['order' => $order->paymentRef, 'error' => $e->getMessage()]);
 
             return back()->withErrors(['payment' => 'We could not open the payment page: '.$e->getMessage()]);
         }
@@ -278,23 +293,24 @@ class StorefrontController extends Controller
         return redirect()->away($link);
     }
 
-    public function order(Request $request, string $slug, string $ref, Flutterwave $flutterwave, SaleRecorder $sales, BillingService $billing): View
+    public function order(Request $request, string $slug, string $ref, PaymentManager $payments, SaleRecorder $sales, BillingService $billing): View
     {
         [$tenant, $config] = $this->store($slug);
         $order = Order::query()->where('tenantId', $tenant->id)->where('paymentRef', $ref)->firstOrFail();
+        $gateway = $payments->active();
 
-        if ($order->status === 'PENDING' && $flutterwave->ready() && ! in_array($request->query('status'), ['cancelled', 'failed'], true)) {
+        if ($order->status === 'PENDING' && $gateway->ready() && ! in_array($request->query('status'), ['cancelled', 'failed'], true)) {
             try {
                 $transactionId = (string) $request->query('transaction_id', '');
                 $payment = $transactionId !== ''
-                    ? $flutterwave->verifyTransaction($transactionId)
-                    : $flutterwave->verifyByReference((string) $request->query('tx_ref', $ref));
-                if (Flutterwave::baseReference((string) ($payment['tx_ref'] ?? '')) === $ref) {
-                    $billing->settlePayment($payment, $flutterwave, $sales);
+                    ? $gateway->verifyTransaction($transactionId)
+                    : $gateway->verifyByReference((string) $request->query('tx_ref', $request->query('reference', $request->query('trxref', $ref))));
+                if ($gateway->baseReference((string) ($payment['tx_ref'] ?? '')) === $ref) {
+                    $billing->settlePayment($payment, $gateway, $sales);
                     $order->refresh();
                 }
             } catch (\Throwable) {
-                // Not paid yet, or Flutterwave is still processing; the webhook settles it when it lands.
+                // Not paid yet, or the gateway is still processing; the webhook settles it when it lands.
             }
         }
 

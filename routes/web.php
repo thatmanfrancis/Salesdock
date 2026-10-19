@@ -43,6 +43,7 @@ Route::middleware('guest')->group(function () {
     Route::get('/register', [RegisterController::class, 'create'])->name('register');
     Route::post('/register', [RegisterController::class, 'store'])->middleware('throttle:auth-register');
     Route::post('/register/resend', [RegisterController::class, 'resend'])->middleware('throttle:auth-mail')->name('register.resend');
+    Route::post('/register/verify-otp', [RegisterController::class, 'verifyOtp'])->middleware('throttle:auth-token')->name('register.verify-otp');
     Route::get('/forgot-password', [PasswordController::class, 'requestForm'])->name('password.request');
     Route::post('/forgot-password', [PasswordController::class, 'send'])->middleware('throttle:auth-mail')->name('password.email');
     Route::get('/reset-password', [PasswordController::class, 'resetForm'])->middleware('throttle:auth-token')->name('password.reset');
@@ -59,6 +60,7 @@ Route::get('/pay/{invoice}', [PaymentController::class, 'checkout'])->name('bill
 Route::post('/pay/{invoice}/start', [PaymentController::class, 'start'])->middleware('throttle:10,1')->name('billing.start');
 Route::get('/billing/verify', [PaymentController::class, 'verify'])->name('billing.verify');
 Route::post('/billing/webhook', [PaymentController::class, 'webhook'])->name('billing.webhook');
+Route::post('/billing/webhook/paystack', [PaymentController::class, 'webhookPaystack'])->name('billing.webhook.paystack');
 
 // HTTP scheduler endpoint — pinged every minute by cron-job.org (no cPanel cron needed)
 Route::get('/scheduler/run', function (Request $request) {
@@ -252,7 +254,11 @@ Route::middleware('auth')->group(function () {
             Route::delete('/users/{user}', [PlatformController::class, 'destroyPlatformUser'])->name('admin.users.destroy');
             Route::get('/customers', [PlatformController::class, 'customers'])->name('admin.customers');
             Route::get('/catalogue', [PlatformController::class, 'catalogue'])->name('admin.catalogue');
+            Route::get('/catalogue/template', [PlatformController::class, 'catalogueTemplate'])->name('admin.catalogue.template');
+            Route::post('/catalogue/import', [PlatformController::class, 'importCatalogue'])->name('admin.catalogue.import');
+            Route::post('/catalogue/bulk', [PlatformController::class, 'storeCatalogueBulk'])->name('admin.catalogue.bulk');
             Route::post('/catalogue/categories', [PlatformController::class, 'storeCategory'])->name('admin.catalogue.categories.store');
+            Route::post('/catalogue/categories/bulk', [PlatformController::class, 'storeCategoriesBulk'])->name('admin.catalogue.categories.bulk');
             Route::put('/catalogue/categories', [PlatformController::class, 'updateCategory'])->name('admin.catalogue.categories.update');
             Route::delete('/catalogue/categories', [PlatformController::class, 'destroyCategory'])->name('admin.catalogue.categories.destroy');
             Route::post('/catalogue', [PlatformController::class, 'storeCatalogue'])->name('admin.catalogue.store');
@@ -265,6 +271,9 @@ Route::middleware('auth')->group(function () {
             Route::get('/settings', [PlatformController::class, 'settings'])->name('admin.settings');
             Route::post('/settings', [PlatformController::class, 'updateSettings'])->name('admin.settings.update');
             Route::post('/settings/contact', [PlatformController::class, 'updateContact'])->name('admin.settings.contact');
+            Route::post('/settings/payments', [PlatformController::class, 'updatePayments'])->name('admin.settings.payments');
+            Route::post('/settings/whatsapp', [PlatformController::class, 'updateZohoWhatsApp'])->name('admin.settings.whatsapp');
+            Route::post('/settings/analytics', [PlatformController::class, 'updateAnalytics'])->name('admin.settings.analytics');
             Route::get('/support', [AdminSupportController::class, 'index'])->name('admin.support');
             Route::get('/support/{ticket}', [AdminSupportController::class, 'show'])->name('admin.support.show');
             Route::post('/support/{ticket}/claim', [AdminSupportController::class, 'claim'])->name('admin.support.claim');

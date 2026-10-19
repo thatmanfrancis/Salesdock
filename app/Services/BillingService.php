@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Contracts\PaymentGateway;
 use App\Models\BillingInvoice;
 use App\Models\Notification;
 use App\Models\Order;
@@ -45,7 +46,7 @@ class BillingService
         $invoice->update([
             'subscriptionId' => $subscription->id,
             'status' => 'PAID',
-            'gateway' => 'FLUTTERWAVE',
+            'gateway' => strtoupper((string) ($payment['gateway'] ?? 'CARD')),
             'gatewayRef' => (string) ($payment['id'] ?? $payment['tx_ref'] ?? $invoice->invoiceNumber),
             'paidAt' => $paidAt,
             'amount' => $payment['amount'] ?? $invoice->amount,
@@ -78,20 +79,20 @@ class BillingService
     }
 
     /**
-     * Applies a Flutterwave-verified payment to the invoice or storefront order it belongs to.
+     * Applies a gateway-verified payment to the invoice or storefront order it belongs to.
      * Returns what was settled, or null when the payment does not match (wrong reference, amount, currency or status).
      */
-    public function settlePayment(array $payment, Flutterwave $flutterwave, SaleRecorder $sales): ?string
+    public function settlePayment(array $payment, PaymentGateway $gateway, SaleRecorder $sales): ?string
     {
-        $reference = Flutterwave::baseReference((string) ($payment['tx_ref'] ?? ''));
+        $reference = $gateway->baseReference((string) ($payment['tx_ref'] ?? ''));
         if ($reference === '') {
             return null;
         }
 
         $invoice = BillingInvoice::query()->where('invoiceNumber', $reference)->first();
         if ($invoice) {
-            if ($invoice->status !== 'PAID' && ! $flutterwave->confirms($payment, $reference, (float) $invoice->amount)) {
-                Log::warning('Flutterwave payment did not match invoice', ['invoice' => $reference, 'paid' => $payment['amount'] ?? null, 'status' => $payment['status'] ?? null]);
+            if ($invoice->status !== 'PAID' && ! $gateway->confirms($payment, $reference, (float) $invoice->amount)) {
+                Log::warning($gateway->label().' payment did not match invoice', ['invoice' => $reference, 'paid' => $payment['amount'] ?? null, 'status' => $payment['status'] ?? null]);
 
                 return null;
             }
@@ -102,8 +103,8 @@ class BillingService
 
         $order = Order::query()->where('paymentRef', $reference)->first();
         if ($order) {
-            if ($order->status === 'PENDING' && ! $flutterwave->confirms($payment, $reference, (float) $order->netAmount)) {
-                Log::warning('Flutterwave payment did not match order', ['order' => $reference, 'paid' => $payment['amount'] ?? null, 'status' => $payment['status'] ?? null]);
+            if ($order->status === 'PENDING' && ! $gateway->confirms($payment, $reference, (float) $order->netAmount)) {
+                Log::warning($gateway->label().' payment did not match order', ['order' => $reference, 'paid' => $payment['amount'] ?? null, 'status' => $payment['status'] ?? null]);
 
                 return null;
             }

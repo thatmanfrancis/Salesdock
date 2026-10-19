@@ -26,6 +26,7 @@ use App\Models\WebhookEvent;
 use App\Services\TenantEraser;
 use App\Support\AuthMail;
 use App\Support\CatalogueCategories;
+use App\Support\CatalogueCsv;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -1244,6 +1245,146 @@ class PlatformController extends MerchantController
         return redirect()->route('admin.catalogue')->with('status', 'Catalogue item added.');
     }
 
+    public function storeCatalogueBulk(Request $request)
+    {
+        $data = $request->validate([
+            'rows' => ['required', 'array', 'min:1', 'max:50'],
+            'rows.*.name' => ['nullable', 'string', 'max:255'],
+            'rows.*.brand' => ['nullable', 'string', 'max:120'],
+            'rows.*.category' => ['nullable', 'string', 'max:120'],
+            'rows.*.unit' => ['nullable', 'string', 'max:80'],
+            'rows.*.barcode' => ['nullable', 'string', 'max:80'],
+            'rows.*.description' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $saved = 0;
+        $skipped = 0;
+        foreach ($data['rows'] as $row) {
+            $name = trim((string) ($row['name'] ?? ''));
+            $category = trim((string) ($row['category'] ?? ''));
+            if ($name === '' && $category === '') {
+                $skipped++;
+
+                continue;
+            }
+            if ($name === '' || $category === '') {
+                return back()->withErrors(['rows' => 'Each filled row needs both a name and a category.'])->withInput(['form' => 'bulk']);
+            }
+            $clean = fn ($value) => ($value = trim((string) $value)) !== '' ? $value : null;
+            CatalogueCategories::remember($category);
+            CatalogueProduct::query()->create([
+                'name' => $name,
+                'brand' => $clean($row['brand'] ?? ''),
+                'category' => $category,
+                'unit' => $clean($row['unit'] ?? ''),
+                'barcode' => $clean($row['barcode'] ?? ''),
+                'description' => $clean($row['description'] ?? ''),
+                'isActive' => true,
+                'createdBy' => $this->user()->id,
+            ]);
+            $saved++;
+        }
+
+        if ($saved === 0) {
+            return back()->withErrors(['rows' => 'Add at least one item with a name and category.'])->withInput(['form' => 'bulk']);
+        }
+
+        $msg = $saved.' catalogue item'.($saved === 1 ? '' : 's').' added.';
+        if ($skipped > 0) {
+            $msg .= ' '.$skipped.' empty row'.($skipped === 1 ? '' : 's').' skipped.';
+        }
+
+        return redirect()->route('admin.catalogue')->with('status', $msg);
+    }
+
+    public function storeCategoriesBulk(Request $request)
+    {
+        $data = $request->validate([
+            'names' => ['required', 'array', 'min:1', 'max:50'],
+            'names.*' => ['nullable', 'string', 'max:120'],
+        ]);
+
+        $saved = 0;
+        $skipped = 0;
+        foreach ($data['names'] as $raw) {
+            $name = trim((string) $raw);
+            if ($name === '') {
+                $skipped++;
+
+                continue;
+            }
+            if ($this->categoryTaken($name)) {
+                $skipped++;
+
+                continue;
+            }
+            CatalogueCategories::remember($name);
+            $saved++;
+        }
+
+        if ($saved === 0) {
+            return back()->withErrors(['names' => 'Add at least one new category name.'])->withInput(['form' => 'categories-bulk']);
+        }
+
+        $msg = $saved.' categor'.($saved === 1 ? 'y' : 'ies').' added.';
+        if ($skipped > 0) {
+            $msg .= ' '.$skipped.' blank or duplicate'.($skipped === 1 ? '' : 's').' skipped.';
+        }
+
+        return redirect()->route('admin.catalogue')->with('status', $msg);
+    }
+
+    public function catalogueTemplate()
+    {
+        $csv = "name,category,brand,unit,barcode,description\n"
+            ."Indomie Chicken,Food,Indomie,per pack,1234567890123,Instant noodles\n"
+            ."Peak Milk 400g,Beverages,Peak,tin,,Full cream powdered milk\n";
+
+        return response($csv, 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="salesdock-catalogue.csv"',
+        ]);
+    }
+
+    public function importCatalogue(Request $request)
+    {
+        $file = $request->validate([
+            'file' => ['required', 'file', 'extensions:csv', 'max:2048'],
+        ])['file'];
+
+        $parsed = collect(CatalogueCsv::parse($file->get()));
+        $rows = $parsed->filter(fn ($row) => trim((string) ($row['name'] ?? '')) !== '' || trim((string) ($row['category'] ?? '')) !== '');
+
+        if ($rows->isEmpty()) {
+            return back()->withErrors(['file' => 'No rows with a name and category found in that CSV.']);
+        }
+
+        $incomplete = $rows->first(fn ($row) => trim((string) ($row['name'] ?? '')) === '' || trim((string) ($row['category'] ?? '')) === '');
+        if ($incomplete) {
+            return back()->withErrors(['file' => 'Every row needs both a name and a category. Download the template if you are unsure.']);
+        }
+
+        $saved = 0;
+        foreach ($rows as $row) {
+            $clean = fn ($value) => ($value = trim((string) $value)) !== '' ? $value : null;
+            $category = trim((string) $row['category']);
+            CatalogueCategories::remember($category);
+            CatalogueProduct::query()->create([
+                'name' => trim((string) $row['name']),
+                'brand' => $clean($row['brand'] ?? ''),
+                'category' => $category,
+                'unit' => $clean($row['unit'] ?? ''),
+                'barcode' => $clean($row['barcode'] ?? ''),
+                'description' => $clean($row['description'] ?? ''),
+                'isActive' => true,
+                'createdBy' => $this->user()->id,
+            ]);
+            $saved++;
+        }
+
+        return redirect()->route('admin.catalogue')->with('status', $saved.' catalogue item'.($saved === 1 ? '' : 's').' imported from CSV.');
+    }
+
     public function updateCatalogue(Request $request, CatalogueProduct $item)
     {
         $item->fill($this->catalogueInput($request))->save();
@@ -1423,7 +1564,91 @@ class PlatformController extends MerchantController
         return view('platform.settings', [
             'notifyEmails' => PlatformSetting::adminNotifyEmails(),
             'contact' => PlatformSetting::supportContact(),
+            'payment' => PlatformSetting::paymentForm(),
+            'zoho' => PlatformSetting::zohoWhatsAppForm(),
+            'googleAnalyticsId' => PlatformSetting::googleAnalyticsId(),
+            'flutterwaveWebhook' => route('billing.webhook'),
+            'paystackWebhook' => route('billing.webhook.paystack'),
         ]);
+    }
+
+    public function updateAnalytics(Request $request)
+    {
+        $data = $request->validate([
+            'measurement_id' => ['nullable', 'string', 'max:32', 'regex:/^(G-[A-Z0-9]+)?$/i'],
+        ], [
+            'measurement_id.regex' => 'Use a GA4 measurement ID like G-XXXXXXXXXX, or leave blank to disable.',
+        ]);
+
+        PlatformSetting::writeGoogleAnalytics($data['measurement_id'] ?? null);
+
+        return back()->with('status', 'Analytics settings saved.');
+    }
+
+    public function updateZohoWhatsApp(Request $request)
+    {
+        $data = $request->validate([
+            'enabled' => ['nullable', 'boolean'],
+            'accounts_url' => ['nullable', 'url', 'max:255'],
+            'api_base' => ['nullable', 'url', 'max:255'],
+            'client_id' => ['nullable', 'string', 'max:255'],
+            'client_secret' => ['nullable', 'string', 'max:255'],
+            'refresh_token' => ['nullable', 'string', 'max:1000'],
+            'screen_name' => ['nullable', 'string', 'max:120'],
+            'app_id' => ['nullable', 'string', 'max:80'],
+            'department_id' => ['nullable', 'string', 'max:80'],
+            'otp_template_id' => ['nullable', 'string', 'max:80'],
+            'restock_template_id' => ['nullable', 'string', 'max:80'],
+            'purchase_order_template_id' => ['nullable', 'string', 'max:80'],
+            'salesiq_widget_code' => ['nullable', 'string', 'max:10000'],
+        ]);
+
+        PlatformSetting::writeZohoWhatsApp([
+            'enabled' => $request->boolean('enabled'),
+            'accounts_url' => $data['accounts_url'] ?? null,
+            'api_base' => $data['api_base'] ?? null,
+            'client_id' => $data['client_id'] ?? null,
+            'client_secret' => $data['client_secret'] ?? null,
+            'refresh_token' => $data['refresh_token'] ?? null,
+            'screen_name' => $data['screen_name'] ?? null,
+            'app_id' => $data['app_id'] ?? null,
+            'department_id' => $data['department_id'] ?? null,
+            'otp_template_id' => $data['otp_template_id'] ?? null,
+            'restock_template_id' => $data['restock_template_id'] ?? null,
+            'purchase_order_template_id' => $data['purchase_order_template_id'] ?? null,
+            'salesiq_widget_code' => $data['salesiq_widget_code'] ?? '',
+        ]);
+
+        return back()->with('status', 'WhatsApp settings saved.');
+    }
+
+    public function updatePayments(Request $request)
+    {
+        $data = $request->validate([
+            'provider' => ['required', 'in:flutterwave,paystack'],
+            'platform_split_percent' => ['required', 'numeric', 'min:0', 'max:50'],
+            'flutterwave_public_key' => ['nullable', 'string', 'max:255'],
+            'flutterwave_secret_key' => ['nullable', 'string', 'max:255'],
+            'flutterwave_secret_hash' => ['nullable', 'string', 'max:255'],
+            'paystack_public_key' => ['nullable', 'string', 'max:255'],
+            'paystack_secret_key' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        PlatformSetting::writePayment([
+            'provider' => $data['provider'],
+            'platform_split' => ((float) $data['platform_split_percent']) / 100,
+            'flutterwave' => [
+                'public_key' => $data['flutterwave_public_key'] ?? null,
+                'secret_key' => $data['flutterwave_secret_key'] ?? null,
+                'secret_hash' => $data['flutterwave_secret_hash'] ?? null,
+            ],
+            'paystack' => [
+                'public_key' => $data['paystack_public_key'] ?? null,
+                'secret_key' => $data['paystack_secret_key'] ?? null,
+            ],
+        ]);
+
+        return back()->with('status', 'Payment settings saved.');
     }
 
     public function updateContact(Request $request)
@@ -1560,17 +1785,15 @@ class PlatformController extends MerchantController
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'brand' => ['nullable', 'string', 'max:120'],
-            'category' => ['nullable', 'string', 'max:120'],
+            'category' => ['required', 'string', 'max:120'],
             'unit' => ['nullable', 'string', 'max:80'],
             'barcode' => ['nullable', 'string', 'max:80'],
             'description' => ['nullable', 'string', 'max:2000'],
         ]);
         $clean = fn ($value) => ($value = trim((string) $value)) !== '' ? $value : null;
 
-        $category = $clean($data['category'] ?? '');
-        if ($category) {
-            CatalogueCategories::remember($category);
-        }
+        $category = trim($data['category']);
+        CatalogueCategories::remember($category);
 
         return [
             'name' => trim($data['name']),

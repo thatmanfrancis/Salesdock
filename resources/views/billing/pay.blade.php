@@ -13,9 +13,9 @@
             @if ($ready)
                 <form method="post" action="{{ route('billing.start', ['invoice' => $invoice->invoiceNumber]) }}" data-pay-form>
                     @csrf
-                    <button type="submit" class="mt-6 w-full rounded-md bg-green-500 py-3 font-semibold text-white disabled:opacity-60" data-loading="Opening Flutterwave…">Pay with Flutterwave</button>
+                    <button type="submit" class="mt-6 w-full rounded-md bg-green-500 py-3 font-semibold text-white disabled:opacity-60" data-loading="Opening {{ $gatewayLabel }}…">Pay with {{ $gatewayLabel }}</button>
                 </form>
-                <p class="mt-3 text-center text-xs text-gray-400">You'll pay on Flutterwave's secure page by card, bank transfer or USSD, then come straight back here.</p>
+                <p class="mt-3 text-center text-xs text-gray-400">You'll pay on {{ $gatewayLabel }}'s secure page by card, bank transfer or USSD, then come straight back here.</p>
                 <script>
                     document.querySelector('[data-pay-form]').addEventListener('submit', function (event) {
                         var button = event.target.querySelector('button');

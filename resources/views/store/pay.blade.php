@@ -15,9 +15,9 @@
         @if ($ready)
             <form method="post" action="{{ route('store.pay.start', [$tenant->slug, $order->paymentRef]) }}" data-pay-form>
                 @csrf
-                <button type="submit" class="sf-btn" data-loading="Opening Flutterwave…">Pay with Flutterwave</button>
+                <button type="submit" class="sf-btn" data-loading="Opening {{ $gatewayLabel }}…">Pay with {{ $gatewayLabel }}</button>
             </form>
-            <p class="muted">You'll pay on Flutterwave's secure page, then come straight back to your order.</p>
+            <p class="muted">You'll pay on {{ $gatewayLabel }}'s secure page, then come straight back to your order.</p>
             <script>
                 document.querySelector('[data-pay-form]').addEventListener('submit', function (event) {
                     var button = event.target.querySelector('button');

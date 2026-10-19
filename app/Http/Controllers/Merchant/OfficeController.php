@@ -13,6 +13,7 @@ use App\Models\FinancialGoal;
 use App\Models\Notification;
 use App\Models\Order;
 use App\Models\Plan;
+use App\Models\PlatformSetting;
 use App\Models\Product;
 use App\Models\Role;
 use App\Models\SalesLedger;
@@ -24,7 +25,8 @@ use App\Models\TaxFiling;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Models\VatSettings;
-use App\Services\Flutterwave;
+use App\Services\PaymentManager;
+use App\Services\StorePayouts;
 use App\Services\TaxReturns;
 use App\Support\Approval;
 use App\Support\AuthMail;
@@ -37,9 +39,11 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class OfficeController extends MerchantController
@@ -1186,6 +1190,14 @@ class OfficeController extends MerchantController
                 'unlinkedProducts' => Product::query()->where('tenantId', $tenant->id)->where('isActive', true)->whereNull('supplierId')->count(),
             ] : null,
             'storeUrl' => $tenant->slug ? route('store.show', $tenant->slug) : null,
+            'banks' => $section === 'storefront' ? app(PaymentManager::class)->active()->banks() : [],
+            'platformSplitPercent' => $section === 'storefront'
+                ? round((float) PlatformSetting::payment()['platform_split'] * 100, 1)
+                : null,
+            'payoutConnected' => $section === 'storefront' && $store
+                ? (bool) $store->{app(PaymentManager::class)->active()->subaccountColumn()}
+                : false,
+            'gatewayLabel' => $section === 'storefront' ? app(PaymentManager::class)->active()->label() : null,
         ]);
     }
 
@@ -1651,7 +1663,7 @@ class OfficeController extends MerchantController
         Approval::log($request, $user->tenantId, $user->id, $user->id, $action, []);
     }
 
-    public function billing(Request $request, Flutterwave $flutterwave)
+    public function billing(Request $request, PaymentManager $payments)
     {
         $tenantId = $this->tenantId();
         $cycles = [
@@ -1674,6 +1686,7 @@ class OfficeController extends MerchantController
         $total = (clone $invoiceQuery)->count();
         $pages = max(1, (int) ceil($total / $perPage));
         $page = min($pages, max(1, (int) $request->query('page', 1)));
+        $gateway = $payments->active();
 
         return view('merchant.billing', [
             'subscription' => $subscription,
@@ -1699,7 +1712,8 @@ class OfficeController extends MerchantController
                 'WAIVED' => 'Waived',
             ],
             'canChange' => $this->changesBilling(),
-            'ready' => $flutterwave->ready(),
+            'ready' => $gateway->ready(),
+            'gatewayLabel' => $gateway->label(),
             'page' => $page,
             'pages' => $pages,
         ]);
@@ -1760,7 +1774,7 @@ class OfficeController extends MerchantController
         ];
     }
 
-    public function choosePlan(Request $request, Flutterwave $flutterwave)
+    public function choosePlan(Request $request, PaymentManager $payments)
     {
         abort_unless($this->changesBilling(), 403);
 
@@ -1782,8 +1796,8 @@ class OfficeController extends MerchantController
         if ($amount <= 0) {
             return back()->withErrors(['plan' => $plan->name.' is not available on that billing cycle. Choose another cycle.']);
         }
-        if (! $flutterwave->ready()) {
-            return back()->withErrors(['plan' => 'Payment key missing.']);
+        if (! $payments->active()->ready()) {
+            return back()->withErrors(['plan' => 'Online payments are not configured yet. Ask support to finish Admin → Settings → Payments.']);
         }
 
         $start = Carbon::now();
@@ -2117,6 +2131,7 @@ class OfficeController extends MerchantController
 
     private function saveStorefront(Request $request)
     {
+        $banks = app(PaymentManager::class)->active()->banks();
         $data = $request->validate([
             'storeName' => ['nullable', 'string', 'max:255'],
             'tagline' => ['nullable', 'string', 'max:255'],
@@ -2124,8 +2139,8 @@ class OfficeController extends MerchantController
             'customDomain' => ['nullable', 'string', 'max:255'],
             'metaTitle' => ['nullable', 'string', 'max:255'],
             'metaDescription' => ['nullable', 'string', 'max:500'],
-            'bankName' => ['nullable', 'string', 'max:120'],
-            'bankAccount' => ['nullable', 'string', 'max:20'],
+            'bankCode' => ['required', 'string', 'max:20', Rule::in(array_keys($banks))],
+            'bankAccount' => ['required', 'string', 'max:20'],
             'accountName' => ['nullable', 'string', 'max:255'],
             'banner' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
         ]);
@@ -2138,9 +2153,6 @@ class OfficeController extends MerchantController
             'customDomain' => $data['customDomain'] ?: null,
             'metaTitle' => $data['metaTitle'] ?: null,
             'metaDescription' => $data['metaDescription'] ?: null,
-            'bankName' => $data['bankName'] ?: null,
-            'bankAccount' => $data['bankAccount'] ?: null,
-            'accountName' => $data['accountName'] ?: null,
             'isPublic' => $request->boolean('isPublic'),
             'allowGuestOrder' => $request->boolean('allowGuestOrder'),
             'updatedAt' => now(),
@@ -2148,10 +2160,21 @@ class OfficeController extends MerchantController
         if ($request->hasFile('banner')) {
             $store->bannerImageUrl = $this->publicUrl($request->file('banner')->store('shops/'.$tenant->id, 'public'));
         }
-        $store->save();
+
+        try {
+            app(StorePayouts::class)->sync($tenant, $store, [
+                'bankCode' => $data['bankCode'],
+                'bankAccount' => $data['bankAccount'],
+                'accountName' => $data['accountName'] ?? null,
+                'bankName' => $banks[$data['bankCode']] ?? null,
+            ]);
+        } catch (\RuntimeException $e) {
+            return back()->withInput()->withErrors(['bankAccount' => $e->getMessage()]);
+        }
+
         $this->settingsAudit($request, 'storefront');
 
-        return redirect()->route('settings', ['section' => 'storefront'])->with('status', 'Storefront saved.');
+        return redirect()->route('settings', ['section' => 'storefront'])->with('status', 'Storefront saved. Online payments will settle to this account.');
     }
 
     private function publicUrl(string $path): string
@@ -2351,7 +2374,7 @@ class OfficeController extends MerchantController
     }
 
     /**
-     * @return array{0: ?string, 1: \Illuminate\Support\Collection<string, string>}
+     * @return array{0: ?string, 1: Collection<string, string>}
      */
     private function analyticsBranch(Request $request, string $tenantId): array
     {

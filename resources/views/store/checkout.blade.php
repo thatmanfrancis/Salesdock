@@ -41,7 +41,7 @@
                 <label>
                     <span>Payment method</span>
                     <select name="method" id="checkout-method">
-                        <option value="CARD" @selected($method === 'CARD')>Card / Flutterwave</option>
+                        <option value="CARD" @selected($method === 'CARD')>Card / {{ $gatewayLabel ?? 'Online' }}</option>
                         <option value="TRANSFER" @selected($method === 'TRANSFER')>Bank transfer</option>
                     </select>
                 </label>

@@ -679,7 +679,7 @@ return new class extends Migration
             $table->string('credentialDeviceType');
             $table->boolean('credentialBackedUp');
             $table->string('transports')->nullable();
-            $table->primary(['user_id', 'credential_id']);
+            $table->primary(['userId', 'credentialID']);
         });
 
         Schema::create('tenant_registrations', function (Blueprint $table) {

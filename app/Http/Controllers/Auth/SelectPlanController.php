@@ -5,15 +5,17 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Models\BillingInvoice;
 use App\Models\Plan;
+use App\Models\PlatformSetting;
 use App\Models\Subscription;
 use App\Models\TenantRegistration;
+use App\Services\PaymentManager;
 use App\Services\TenantProvisioner;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
 class SelectPlanController extends Controller
 {
-    public function create(Request $request)
+    public function create(Request $request, PaymentManager $payments)
     {
         $registration = $this->registration($request->query('token'));
 
@@ -23,6 +25,7 @@ class SelectPlanController extends Controller
                 ? Plan::query()->purchasable()->orderBy('monthlyPrice')->get()
                 : collect(),
             'token' => $request->query('token'),
+            'gatewayLabel' => $payments->active()->label(),
         ]);
     }
 
@@ -71,7 +74,7 @@ class SelectPlanController extends Controller
         $payload = [
             'billingCycle' => $data['billingCycle'],
             'amount' => $amount,
-            'gateway' => 'FLUTTERWAVE',
+            'gateway' => strtoupper((string) PlatformSetting::payment()['provider']),
             'gatewayRef' => $plan->id,
             'periodStart' => $start,
             'periodEnd' => $end,

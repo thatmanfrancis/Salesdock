@@ -58,8 +58,20 @@
                 <span>RC number</span>
                 <input name="rcNumber" value="{{ old('rcNumber', $profile['rcNumber']) }}" placeholder="RC123456" maxlength="50">
             </label>
+            <p class="muted wide" style="margin:0.25rem 0 0">Payout account — online store card payments settle here (SalesDock keeps a small service fee).</p>
+            <div class="wide">
+                <x-ui.select name="bankCode" label="Bank" :value="old('bankCode', $profile['bankCode'] ?? '')" :options="['' => 'Choose your bank'] + ($profile['banks'] ?? [])" required />
+            </div>
+            <label class="ui-field">
+                <span>Account number <span class="req">*</span></span>
+                <input name="bankAccount" value="{{ old('bankAccount', $profile['bankAccount']) }}" placeholder="0123456789" maxlength="20" inputmode="numeric" required autocomplete="off">
+            </label>
+            <label class="ui-field">
+                <span>Account name</span>
+                <input name="accountName" value="{{ old('accountName', $profile['accountName']) }}" placeholder="Name on the account" maxlength="255" autocomplete="off">
+            </label>
         </div>
-        <p class="muted onboard-note">These details appear on your receipts, online store and official reports.</p>
+        <p class="muted onboard-note">These details appear on your receipts, online store and official reports. We confirm the account with the payment provider when keys are set.</p>
         <div class="ui-modal-actions">
             <button type="submit" class="onboard-go" data-loading="Saving…"><span data-label>Save and continue</span></button>
         </div>

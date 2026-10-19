@@ -468,24 +468,38 @@ class DeskController extends MerchantController
         [$used, $limit] = $this->productAllowance();
         $remaining = max(0, $limit - $used);
         $businessType = $this->tenantBusinessType();
-        $categories = $this->starterCategoriesFor($businessType);
+        $suggested = $this->starterCategoriesFor($businessType);
 
-        $items = collect();
-        if ($categories) {
-            $items = CatalogueProduct::query()
-                ->where('isActive', true)
-                ->where(function ($q) use ($categories) {
-                    foreach ($categories as $cat) {
-                        $q->orWhereRaw('lower(category) = ?', [mb_strtolower($cat)]);
-                    }
-                })
-                ->orderBy('category')
-                ->orderBy('name')
-                ->limit(max(1, $remaining + 50)) // fetch a bit more so user can pick
-                ->get();
+        $availableCategories = CatalogueProduct::query()
+            ->where('isActive', true)
+            ->whereNotNull('category')
+            ->where('category', '!=', '')
+            ->distinct()
+            ->orderBy('category')
+            ->pluck('category')
+            ->map(fn ($name) => trim((string) $name))
+            ->filter()
+            ->unique(fn ($name) => mb_strtolower($name))
+            ->values();
+
+        $picked = trim((string) $request->query('category', ''));
+        if ($picked !== '' && ! $availableCategories->contains(fn ($name) => mb_strtolower($name) === mb_strtolower($picked))) {
+            $picked = '';
         }
 
-        // Mark items already imported by this tenant
+        $query = CatalogueProduct::query()->where('isActive', true)->orderBy('category')->orderBy('name');
+        if ($picked !== '') {
+            $query->whereRaw('lower(category) = ?', [mb_strtolower($picked)]);
+        } elseif ($suggested !== []) {
+            $query->where(function ($q) use ($suggested) {
+                foreach ($suggested as $cat) {
+                    $q->orWhereRaw('lower(category) = ?', [mb_strtolower($cat)]);
+                }
+            });
+        }
+
+        $items = $query->limit(max(1, $remaining + 80))->get();
+
         $existingNames = Product::query()
             ->where('tenantId', $this->tenantId())
             ->where('isActive', true)
@@ -493,12 +507,20 @@ class DeskController extends MerchantController
             ->map(fn ($n) => mb_strtolower($n))
             ->all();
 
+        $categoryOptions = ['' => $suggested !== [] ? 'Suggested for '.$businessType : 'All categories'];
+        foreach ($availableCategories as $name) {
+            $categoryOptions[$name] = $name;
+        }
+
         return view('merchant.products-starter', [
             'items' => $items,
             'used' => $used,
             'limit' => $limit,
             'remaining' => $remaining,
             'businessType' => $businessType,
+            'suggested' => $suggested,
+            'pickedCategory' => $picked,
+            'categoryOptions' => $categoryOptions,
             'existingNames' => $existingNames,
             'branches' => $this->branchChoices($this->tenantId()),
         ]);
@@ -1445,12 +1467,12 @@ class DeskController extends MerchantController
         $channel = null;
         if (! $manual) {
             if (SupplierMessenger::channels($supplier) === []) {
-                return back()->withErrors(['po' => 'Add an email address for this supplier to send the order, or mark it as sent.']);
+                return back()->withErrors(['po' => 'Add an email or WhatsApp number for this supplier to send the order, or mark it as sent.']);
             }
             $tenant = Tenant::query()->findOrFail($purchaseOrder->tenantId);
             $channel = app(SupplierMessenger::class)->sendPurchaseOrder($purchaseOrder, $supplier, $tenant);
             if (! $channel) {
-                return back()->withErrors(['po' => 'We could not email '.$supplier->name.'. Try again, or mark it as sent if you shared it another way.']);
+                return back()->withErrors(['po' => 'We could not reach '.$supplier->name.' by email or WhatsApp. Try again, or mark it as sent if you shared it another way.']);
             }
         }
 
@@ -1462,9 +1484,14 @@ class DeskController extends MerchantController
             'channel' => $channel ?? 'manual',
         ]);
 
-        return back()->with('status', $channel === 'email'
-            ? 'Purchase order emailed to '.$supplier->contactEmail.'.'
-            : 'Purchase order marked as sent.');
+        $status = match ($channel) {
+            'email' => 'Purchase order emailed to '.$supplier->contactEmail.'.',
+            'whatsapp' => 'Purchase order sent on WhatsApp to '.$supplier->name.'.',
+            'email+whatsapp', 'whatsapp+email' => 'Purchase order emailed and sent on WhatsApp to '.$supplier->name.'.',
+            default => 'Purchase order marked as sent.',
+        };
+
+        return back()->with('status', $status);
     }
 
     public function updatePurchaseOrder(Request $request, PurchaseOrder $purchaseOrder)

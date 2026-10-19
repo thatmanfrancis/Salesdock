@@ -105,7 +105,7 @@
                                 </div>
                                 @unless ($canEmail)
                                     <p class="hint">
-                                        {{ $supplier?->name ?? 'This supplier' }} has no email address yet.
+                                        {{ $supplier?->name ?? 'This supplier' }} has no email or WhatsApp number yet.
                                         @if ($supplier)
                                             <a href="{{ route('suppliers.show', $supplier) }}">Add one</a> to send from here, or use Mark as sent if you shared it another way.
                                         @endif

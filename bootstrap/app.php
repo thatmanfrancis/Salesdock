@@ -24,7 +24,10 @@ return Application::configure(basePath: dirname(__DIR__))
             'super' => EnsureSuperAdmin::class,
             'away' => EnsureAwayCheckIn::class,
         ]);
-        $middleware->validateCsrfTokens(except: ['billing/webhook']);
+        $middleware->validateCsrfTokens(except: [
+            'billing/webhook',
+            'billing/webhook/paystack',
+        ]);
         $middleware->redirectGuestsTo('/login');
         $middleware->redirectUsersTo(function () {
             $user = Auth::user();
