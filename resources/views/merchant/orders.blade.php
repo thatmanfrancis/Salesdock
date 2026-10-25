@@ -54,7 +54,7 @@
                                 @endif
                                 <td>{{ $names[$order->cashierId] ?? '—' }}</td>
                             @endif
-                            <td><a href="{{ route('orders.show', $order) }}">{{ $order->customerName ?: 'Walk-in' }}</a></td>
+                            <td><a href="{{ route('orders.show', $order) }}">{{ $order->customerName ?: 'Walk-in' }}</a>@if (($order->deliveryMethod ?? null) === 'FEZ')<br><small>Fez delivery</small>@endif</td>
                             <td>{{ $order->netAmount !== null ? '₦'.number_format((float) $order->netAmount, 2) : '—' }}</td>
                         </tr>
                     @empty

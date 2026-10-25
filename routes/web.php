@@ -10,6 +10,7 @@ use App\Http\Controllers\Auth\SelectPlanController;
 use App\Http\Controllers\Auth\VerifyEmailController;
 use App\Http\Controllers\Auth\WelcomeBackController;
 use App\Http\Controllers\Billing\PaymentController;
+use App\Http\Controllers\Merchant\DeliveryController;
 use App\Http\Controllers\Merchant\DeskController;
 use App\Http\Controllers\Merchant\OfficeController;
 use App\Http\Controllers\Merchant\SupportController;
@@ -61,6 +62,7 @@ Route::post('/pay/{invoice}/start', [PaymentController::class, 'start'])->middle
 Route::get('/billing/verify', [PaymentController::class, 'verify'])->name('billing.verify');
 Route::post('/billing/webhook', [PaymentController::class, 'webhook'])->name('billing.webhook');
 Route::post('/billing/webhook/paystack', [PaymentController::class, 'webhookPaystack'])->name('billing.webhook.paystack');
+Route::post('/delivery/webhook/fez', [DeliveryController::class, 'webhook'])->name('delivery.webhook');
 
 // HTTP scheduler endpoint — pinged every minute by cron-job.org (no cPanel cron needed)
 Route::get('/scheduler/run', function (Request $request) {
@@ -81,6 +83,7 @@ Route::prefix('store/{slug}')->group(function () {
     Route::post('/cart', [StorefrontController::class, 'addToCart'])->name('store.cart.add');
     Route::put('/cart', [StorefrontController::class, 'updateCart'])->name('store.cart.update');
     Route::delete('/cart', [StorefrontController::class, 'removeFromCart'])->name('store.cart.remove');
+    Route::get('/delivery-quote', [StorefrontController::class, 'deliveryQuote'])->name('store.delivery-quote');
     Route::get('/checkout', [StorefrontController::class, 'checkoutForm'])->name('store.checkout');
     Route::post('/checkout', [StorefrontController::class, 'checkout'])->name('store.checkout.store');
     Route::get('/pay/{ref}', [StorefrontController::class, 'pay'])->name('store.pay');
@@ -190,6 +193,11 @@ Route::middleware('auth')->group(function () {
         Route::post('/branches/{branch}/status', [OfficeController::class, 'toggleBranch'])->name('branches.status');
         Route::get('/settings', [OfficeController::class, 'settings'])->name('settings');
         Route::post('/settings', [OfficeController::class, 'updateSettings'])->name('settings.update');
+        Route::post('/settings/delivery', [DeliveryController::class, 'updateAccount'])->name('settings.delivery');
+        Route::post('/settings/delivery/test', [DeliveryController::class, 'testAccount'])->name('settings.delivery.test');
+        Route::post('/orders/{order}/delivery/book', [DeliveryController::class, 'book'])->name('orders.delivery.book');
+        Route::post('/deliveries/{delivery}/refresh', [DeliveryController::class, 'refresh'])->name('deliveries.refresh');
+        Route::post('/deliveries/{delivery}/cancel', [DeliveryController::class, 'cancel'])->name('deliveries.cancel');
         Route::get('/roles', [OfficeController::class, 'roles'])->name('roles');
         Route::post('/roles', [OfficeController::class, 'storeRole'])->name('roles.store');
         Route::put('/roles/{role}', [OfficeController::class, 'updateRole'])->name('roles.update');
@@ -274,6 +282,7 @@ Route::middleware('auth')->group(function () {
             Route::post('/settings/payments', [PlatformController::class, 'updatePayments'])->name('admin.settings.payments');
             Route::post('/settings/whatsapp', [PlatformController::class, 'updateZohoWhatsApp'])->name('admin.settings.whatsapp');
             Route::post('/settings/analytics', [PlatformController::class, 'updateAnalytics'])->name('admin.settings.analytics');
+            Route::post('/settings/delivery', [PlatformController::class, 'updateDelivery'])->name('admin.settings.delivery');
             Route::get('/support', [AdminSupportController::class, 'index'])->name('admin.support');
             Route::get('/support/{ticket}', [AdminSupportController::class, 'show'])->name('admin.support.show');
             Route::post('/support/{ticket}/claim', [AdminSupportController::class, 'claim'])->name('admin.support.claim');

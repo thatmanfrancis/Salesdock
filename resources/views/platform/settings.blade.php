@@ -67,6 +67,38 @@
         </section>
 
         <section class="card">
+            <p class="kicker band">Delivery (Fez)</p>
+            <p class="muted" style="margin-bottom:0.75rem">Each merchant connects their own Fez Business account under Settings → Delivery and funds Fez directly. SalesDock never collects delivery top-ups. Use this section only for the global switch, API endpoints, and support links. Connected merchant accounts: <strong>{{ $deliveryAccounts }}</strong>. Deliveries needing attention: <strong>{{ $deliveryAttention }}</strong>.</p>
+            <form method="post" action="{{ route('admin.settings.delivery') }}" data-busy class="contact-form">
+                @csrf
+                <label class="ui-field wide" style="display:flex;align-items:center;gap:0.5rem">
+                    <input type="checkbox" name="enabled" value="1" @checked(old('enabled', $delivery['enabled']))>
+                    <span>Enable Fez delivery platform-wide</span>
+                </label>
+                <label class="ui-field">
+                    <span>Sandbox API base URL</span>
+                    <input type="url" name="sandbox_base_url" value="{{ old('sandbox_base_url', $delivery['sandbox_base_url']) }}" placeholder="https://apisandbox.fezdelivery.co/v1">
+                </label>
+                <label class="ui-field">
+                    <span>Production API base URL</span>
+                    <input type="url" name="production_base_url" value="{{ old('production_base_url', $delivery['production_base_url']) }}" placeholder="Ask Fez to confirm">
+                </label>
+                <label class="ui-field">
+                    <span>Fez Business Portal URL</span>
+                    <input type="url" name="portal_url" value="{{ old('portal_url', $delivery['portal_url']) }}" placeholder="https://…">
+                </label>
+                <label class="ui-field">
+                    <span>Fez support URL</span>
+                    <input type="url" name="support_url" value="{{ old('support_url', $delivery['support_url']) }}" placeholder="https://…">
+                </label>
+                <p class="muted wide" style="margin:0">Webhook URL given to Fez for merchant organisations: <code>{{ $fezWebhook }}</code></p>
+                <div class="wide">
+                    <button type="submit" data-loading="Saving…"><span data-label>Save delivery settings</span></button>
+                </div>
+            </form>
+        </section>
+
+        <section class="card">
             <p class="kicker band">Google Analytics</p>
             <p class="muted" style="margin-bottom:0.75rem">Paste your GA4 measurement ID to track visits across the marketing site, auth pages, and storefronts. Leave blank to turn tracking off. Find it in Google Analytics → Admin → Data streams → your web stream.</p>
             <form method="post" action="{{ route('admin.settings.analytics') }}" data-busy class="contact-form">

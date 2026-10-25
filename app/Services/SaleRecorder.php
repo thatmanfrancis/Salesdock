@@ -2,9 +2,12 @@
 
 namespace App\Services;
 
+use App\Jobs\BookFezDelivery;
 use App\Models\ActivityLog;
 use App\Models\AuditLog;
 use App\Models\Customer;
+use App\Models\Delivery;
+use App\Models\DeliveryAccount;
 use App\Models\Hold;
 use App\Models\Notification;
 use App\Models\Order;
@@ -95,6 +98,8 @@ class SaleRecorder
             $netAmount = max(0, $gross - $discount + ($inclusive ? 0 : $tax));
             $serviceCharge = round($netAmount * max(0, (float) ($meta['serviceRate'] ?? 0)), 2);
             $netAmount += $serviceCharge;
+            $deliveryFee = max(0, round((float) ($meta['deliveryFee'] ?? 0), 2));
+            $netAmount += $deliveryFee;
             $customer = $this->customer($tenantId, $meta, $complete ? $netAmount : 0);
 
             $order = Order::query()->create([
@@ -108,6 +113,9 @@ class SaleRecorder
                 'taxAmount' => $tax,
                 'netAmount' => $netAmount,
                 'serviceCharge' => $serviceCharge,
+                'deliveryMethod' => $meta['deliveryMethod'] ?? null,
+                'deliveryState' => $meta['deliveryState'] ?? null,
+                'deliveryFee' => $deliveryFee,
                 'customerId' => $customer?->id,
                 'customerName' => $meta['customerName'] ?? $customer?->name,
                 'customerEmail' => $meta['customerEmail'] ?? $customer?->email,
@@ -239,6 +247,16 @@ class SaleRecorder
                 'cashierId' => $order->cashierId,
                 'method' => $transaction->method ?? 'CARD',
             ]);
+
+            if ($order->deliveryMethod === 'FEZ') {
+                $delivery = Delivery::query()->where('orderId', $order->id)->first();
+                $account = $delivery?->deliveryAccountId
+                    ? DeliveryAccount::query()->whereKey($delivery->deliveryAccountId)->first()
+                    : null;
+                if ($delivery && $account?->enabled && $account->autoBook) {
+                    DB::afterCommit(fn () => BookFezDelivery::dispatch($delivery->id));
+                }
+            }
 
             if ($order->customerId) {
                 $customer = Customer::query()->find($order->customerId);

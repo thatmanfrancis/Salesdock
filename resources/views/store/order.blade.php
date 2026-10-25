@@ -18,6 +18,25 @@
             <p class="muted">{{ $order->customerAddress }}</p>
         @endif
 
+        @if (($order->deliveryMethod ?? null) === 'FEZ')
+            <div class="sf-hint">
+                <p><strong>Fez Delivery</strong>@if($order->deliveryState) to {{ $order->deliveryState }}@endif</p>
+                @if ($delivery)
+                    <p>{{ $delivery->customerStatus() }}</p>
+                    @if ($delivery->providerOrderNo)
+                        <p>Fez order number: <strong>{{ $delivery->providerOrderNo }}</strong></p>
+                    @endif
+                    @if ($delivery->proofOfDelivery)
+                        <p>Proof of delivery: {{ $delivery->proofOfDelivery }}</p>
+                    @endif
+                @else
+                    <p>The shop is arranging delivery.</p>
+                @endif
+            </div>
+        @elseif (($order->deliveryMethod ?? null) === 'PICKUP')
+            <p class="muted">Pickup from the shop.</p>
+        @endif
+
         @if ($order->status === 'PENDING' && $config->bankName)
             <div class="sf-hint">
                 <p>Pay by transfer to complete this order:</p>
@@ -57,6 +76,12 @@
                 <p>
                     <span>Service charge (1.5%)</span>
                     <span>₦{{ number_format($serviceFee, 2) }}</span>
+                </p>
+            @endif
+            @if ((float) ($order->deliveryFee ?? 0) > 0)
+                <p>
+                    <span>Fez delivery</span>
+                    <span>₦{{ number_format((float) $order->deliveryFee, 2) }}</span>
                 </p>
             @endif
             @if ((float)$order->taxAmount > 0)

@@ -6,6 +6,7 @@
     $sections = [
         'business' => 'Business',
         'vat' => 'VAT',
+        'delivery' => 'Delivery',
         'subscription' => 'Subscription',
     ];
     if ($opensStorefront ?? false) {
@@ -13,6 +14,7 @@
             'business' => 'Business',
             'vat' => 'VAT',
             'storefront' => 'Storefront',
+            'delivery' => 'Delivery',
             'subscription' => 'Subscription',
         ];
     }
@@ -204,6 +206,70 @@
                                 <button type="submit" data-loading="Saving…"><span data-label>Save</span></button>
                             </div>
                         </form>
+                    </section>
+                @elseif ($section === 'delivery')
+                    <section class="card profile-narrow">
+                        <form method="post" action="{{ route('settings.delivery') }}" data-busy>
+                            @csrf
+                            <p class="kicker">Fez Delivery</p>
+                            <p class="hint">Connect <strong>your own Fez Business account</strong>. You fund Fez directly in the Fez app or Business Portal — SalesDock never collects delivery top-ups, and refunds for eligible cancellations return to your Fez wallet.</p>
+                            @if (!($deliveryConfig['enabled'] ?? true))
+                                <p class="note ended">Fez delivery is currently disabled by SalesDock admin.</p>
+                            @endif
+                            @if (($deliveryAttention ?? 0) > 0)
+                                <p class="note soon">{{ $deliveryAttention }} deliver{{ $deliveryAttention === 1 ? 'y needs' : 'ies need' }} attention (waiting for Fez wallet funds, failed, or uncertain). Open the affected orders to refresh or retry.</p>
+                            @endif
+                            @if ($deliveryAccount?->exists)
+                                <div class="supplier-facts">
+                                    <div><span>Status</span><strong>{{ str_replace('_', ' ', $deliveryAccount->status) }}</strong></div>
+                                    <div><span>Organisation</span><strong>{{ $deliveryAccount->orgName ?: '—' }}</strong></div>
+                                    <div><span>Last tested</span><strong>{{ $deliveryAccount->lastTestedAt?->format('d M Y H:i') ?: 'Not tested' }}</strong></div>
+                                </div>
+                                @if ($deliveryAccount->lastError)
+                                    <p class="note ended">{{ $deliveryAccount->lastError }}</p>
+                                @endif
+                            @endif
+                            <div class="settings-grid">
+                                <label><span>Environment</span>
+                                    <select name="environment">
+                                        <option value="sandbox" @selected(old('environment', $deliveryAccount->environment ?? 'sandbox') === 'sandbox')>Sandbox</option>
+                                        <option value="production" @selected(old('environment', $deliveryAccount->environment ?? 'sandbox') === 'production')>Production</option>
+                                    </select>
+                                </label>
+                                <label><span>Custom API base URL (only if Fez gives you one)</span><input name="baseUrl" value="{{ old('baseUrl', $deliveryAccount->baseUrl) }}" placeholder="Leave blank to use SalesDock's Fez endpoint"></label>
+                                <label><span>Fez user ID</span><input name="fezUserId" value="{{ old('fezUserId') }}" placeholder="{{ $deliveryAccount?->exists ? 'Saved — leave blank to keep' : 'Your Fez Business user ID' }}" autocomplete="off"></label>
+                                <label><span>Fez password</span><input type="password" name="fezPassword" placeholder="{{ $deliveryAccount?->exists ? 'Saved — leave blank to keep' : 'Your Fez Business password' }}" autocomplete="new-password"></label>
+                                <label><span>Fez secret key (if Fez gave you one)</span><input type="password" name="fezSecretKey" placeholder="{{ $deliveryAccount?->secretKey ? 'Saved — leave blank to keep' : 'Optional until Fez confirms' }}" autocomplete="off"></label>
+                                <label><span>Pickup contact name</span><input name="pickupName" value="{{ old('pickupName', $deliveryAccount->pickupName ?: $tenant->name) }}"></label>
+                                <label><span>Pickup phone</span><input name="pickupPhone" value="{{ old('pickupPhone', $deliveryAccount->pickupPhone ?: $tenant->phone) }}"></label>
+                                <label class="wide"><span>Pickup address</span><textarea name="pickupAddress" rows="2">{{ old('pickupAddress', $deliveryAccount->pickupAddress ?: $tenant->address) }}</textarea></label>
+                                <label><span>Pickup state</span>
+                                    <select name="pickupState">
+                                        <option value="">Choose state…</option>
+                                        @foreach ($deliveryStates as $state)
+                                            <option value="{{ $state }}" @selected(old('pickupState', $deliveryAccount->pickupState) === $state)>{{ $state }}</option>
+                                        @endforeach
+                                    </select>
+                                </label>
+                                <label><span>Default parcel weight (kg)</span><input type="number" step="0.01" min="0.1" name="defaultWeightKg" value="{{ old('defaultWeightKg', $deliveryAccount->defaultWeightKg ?? 1) }}"></label>
+                                <label><span>Packaging weight (kg)</span><input type="number" step="0.01" min="0" name="packagingWeightKg" value="{{ old('packagingWeightKg', $deliveryAccount->packagingWeightKg ?? 0) }}"></label>
+                            </div>
+                            <label class="switch"><span>Enable Fez delivery at checkout</span><input type="checkbox" name="enabled" value="1" @checked(old('enabled', $deliveryAccount->enabled ?? false))></label>
+                            <label class="switch"><span>Automatically book Fez after payment is confirmed</span><input type="checkbox" name="autoBook" value="1" @checked(old('autoBook', $deliveryAccount->autoBook ?? false))></label>
+                            <p class="hint">Add each product's weight on its product page. If a product has no weight, SalesDock uses the default parcel weight above. Keep enough funds in your Fez wallet; if Fez reports “Pending Payment”, top up in Fez and refresh the order here.</p>
+                            @if (($deliveryConfig['portal_url'] ?? '') !== '')
+                                <p><a href="{{ $deliveryConfig['portal_url'] }}" target="_blank" rel="noreferrer">Open Fez Business Portal</a></p>
+                            @endif
+                            <div class="ui-modal-actions">
+                                <button type="submit" data-loading="Saving…"><span data-label>Save Fez settings</span></button>
+                            </div>
+                        </form>
+                        @if ($deliveryAccount?->exists)
+                            <form method="post" action="{{ route('settings.delivery.test') }}">
+                                @csrf
+                                <button class="tool" type="submit">Test connection</button>
+                            </form>
+                        @endif
                     </section>
                 @elseif ($section === 'restock')
                     <section class="card profile-narrow">

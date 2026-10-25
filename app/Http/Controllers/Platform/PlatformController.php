@@ -9,6 +9,8 @@ use App\Models\AwayCheckIn;
 use App\Models\BillingInvoice;
 use App\Models\CatalogueProduct;
 use App\Models\Customer;
+use App\Models\Delivery;
+use App\Models\DeliveryAccount;
 use App\Models\Notification;
 use App\Models\PasswordResetToken;
 use App\Models\Plan;
@@ -23,6 +25,7 @@ use App\Models\Tenant;
 use App\Models\TenantRegistration;
 use App\Models\User;
 use App\Models\WebhookEvent;
+use App\Services\CatalogueImport;
 use App\Services\TenantEraser;
 use App\Support\AuthMail;
 use App\Support\CatalogueCategories;
@@ -1336,9 +1339,9 @@ class PlatformController extends MerchantController
 
     public function catalogueTemplate()
     {
-        $csv = "name,category,brand,unit,barcode,description\n"
-            ."Indomie Chicken,Food,Indomie,per pack,1234567890123,Instant noodles\n"
-            ."Peak Milk 400g,Beverages,Peak,tin,,Full cream powdered milk\n";
+        $csv = "name,category,brand,unit,barcode,description,sku\n"
+            ."Indomie Chicken,Food,Indomie,per pack,1234567890123,Instant noodles,SD-FOOD-001\n"
+            ."Peak Milk 400g,Beverages,Peak,tin,,Full cream powdered milk,SD-BEV-001\n";
 
         return response($csv, 200, [
             'Content-Type' => 'text/csv; charset=UTF-8',
@@ -1346,7 +1349,7 @@ class PlatformController extends MerchantController
         ]);
     }
 
-    public function importCatalogue(Request $request)
+    public function importCatalogue(Request $request, CatalogueImport $importer)
     {
         $file = $request->validate([
             'file' => ['required', 'file', 'extensions:csv', 'max:2048'],
@@ -1364,25 +1367,16 @@ class PlatformController extends MerchantController
             return back()->withErrors(['file' => 'Every row needs both a name and a category. Download the template if you are unsure.']);
         }
 
-        $saved = 0;
-        foreach ($rows as $row) {
-            $clean = fn ($value) => ($value = trim((string) $value)) !== '' ? $value : null;
-            $category = trim((string) $row['category']);
-            CatalogueCategories::remember($category);
-            CatalogueProduct::query()->create([
-                'name' => trim((string) $row['name']),
-                'brand' => $clean($row['brand'] ?? ''),
-                'category' => $category,
-                'unit' => $clean($row['unit'] ?? ''),
-                'barcode' => $clean($row['barcode'] ?? ''),
-                'description' => $clean($row['description'] ?? ''),
-                'isActive' => true,
-                'createdBy' => $this->user()->id,
-            ]);
-            $saved++;
+        $result = $importer->import($rows->values()->all(), $this->user()->id);
+        $message = $result['saved'].' catalogue item'.($result['saved'] === 1 ? '' : 's').' imported from CSV.';
+        if ($result['skipped'] > 0) {
+            $message .= ' '.$result['skipped'].' existing or duplicate rows skipped.';
+        }
+        if ($result['skuAdded'] > 0) {
+            $message .= ' Client SKUs added to '.$result['skuAdded'].' existing items.';
         }
 
-        return redirect()->route('admin.catalogue')->with('status', $saved.' catalogue item'.($saved === 1 ? '' : 's').' imported from CSV.');
+        return redirect()->route('admin.catalogue')->with('status', $message);
     }
 
     public function updateCatalogue(Request $request, CatalogueProduct $item)
@@ -1569,6 +1563,10 @@ class PlatformController extends MerchantController
             'googleAnalyticsId' => PlatformSetting::googleAnalyticsId(),
             'flutterwaveWebhook' => route('billing.webhook'),
             'paystackWebhook' => route('billing.webhook.paystack'),
+            'delivery' => PlatformSetting::delivery(),
+            'fezWebhook' => route('delivery.webhook'),
+            'deliveryAccounts' => DeliveryAccount::query()->count(),
+            'deliveryAttention' => Delivery::query()->whereIn('status', ['AWAITING_FEZ_PAYMENT', 'BOOKING_FAILED', 'BOOKING_UNCERTAIN'])->count(),
         ]);
     }
 
@@ -1649,6 +1647,27 @@ class PlatformController extends MerchantController
         ]);
 
         return back()->with('status', 'Payment settings saved.');
+    }
+
+    public function updateDelivery(Request $request)
+    {
+        $data = $request->validate([
+            'enabled' => ['nullable', 'boolean'],
+            'sandbox_base_url' => ['nullable', 'url', 'max:255'],
+            'production_base_url' => ['nullable', 'url', 'max:255'],
+            'portal_url' => ['nullable', 'url', 'max:500'],
+            'support_url' => ['nullable', 'url', 'max:500'],
+        ]);
+
+        PlatformSetting::writeDelivery([
+            'enabled' => $request->boolean('enabled'),
+            'sandbox_base_url' => $data['sandbox_base_url'] ?? '',
+            'production_base_url' => $data['production_base_url'] ?? '',
+            'portal_url' => $data['portal_url'] ?? '',
+            'support_url' => $data['support_url'] ?? '',
+        ]);
+
+        return back()->with('status', 'Delivery settings saved. Merchants connect and fund their own Fez Business accounts; SalesDock does not collect delivery top-ups.');
     }
 
     public function updateContact(Request $request)

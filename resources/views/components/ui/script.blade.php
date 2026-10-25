@@ -28,6 +28,41 @@
                 const input = field.querySelector('[data-select-value]');
                 const label = field.querySelector('[data-select-label]');
                 if (!open || !menu || !input || !label) return;
+                const search = menu.querySelector('[data-select-search]');
+                const optionsList = menu.querySelector('.ui-select-options');
+                const filterOptions = () => {
+                    const query = search.value.trim().toLocaleLowerCase();
+                    let matches = 0;
+                    menu.querySelectorAll('[role="option"]').forEach((option) => {
+                        const matchesQuery = option.textContent.toLocaleLowerCase().includes(query);
+                        option.closest('li').hidden = !matchesQuery;
+                        if (matchesQuery) matches++;
+                    });
+                    menu.querySelector('[data-select-empty]').hidden = matches > 0;
+                    optionsList.scrollTop = 0;
+                };
+                search?.addEventListener('input', filterOptions);
+                if (search) {
+                    menu.addEventListener('keydown', (event) => {
+                        if (event.key === 'Escape') {
+                            menu.hidden = true;
+                            open.setAttribute('aria-expanded', 'false');
+                            open.focus();
+                            return;
+                        }
+                        if (event.target === search && event.key === 'Enter') {
+                            event.preventDefault();
+                        }
+                        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+                        event.preventDefault();
+                        const visible = [...menu.querySelectorAll('[role="option"]')].filter((option) => !option.closest('li').hidden);
+                        const index = visible.indexOf(document.activeElement);
+                        const next = index < 0
+                            ? (event.key === 'ArrowDown' ? 0 : visible.length - 1)
+                            : (index + (event.key === 'ArrowDown' ? 1 : -1) + visible.length) % visible.length;
+                        visible[next]?.focus();
+                    });
+                }
                 const sync = () => {
                     let chosen = null;
                     menu.querySelectorAll('[role="option"]').forEach((option) => {
@@ -42,6 +77,11 @@
                     closeMenus(show ? menu : null);
                     menu.hidden = !show;
                     open.setAttribute('aria-expanded', show ? 'true' : 'false');
+                    if (show && search) {
+                        search.value = '';
+                        filterOptions();
+                        search.focus({ preventScroll: true });
+                    }
                 });
                 menu.addEventListener('click', (event) => {
                     const option = event.target.closest('[data-value]');
@@ -51,6 +91,7 @@
                     menu.hidden = true;
                     open.setAttribute('aria-expanded', 'false');
                     input.dispatchEvent(new Event('change', { bubbles: true }));
+                    if (search) open.focus({ preventScroll: true });
                 });
                 input.addEventListener('change', sync);
             });

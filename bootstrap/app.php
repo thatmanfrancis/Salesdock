@@ -27,6 +27,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->validateCsrfTokens(except: [
             'billing/webhook',
             'billing/webhook/paystack',
+            'delivery/webhook/fez',
         ]);
         $middleware->redirectGuestsTo('/login');
         $middleware->redirectUsersTo(function () {

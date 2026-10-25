@@ -7,6 +7,8 @@ use App\Models\AuditLog;
 use App\Models\BillingInvoice;
 use App\Models\Branch;
 use App\Models\Customer;
+use App\Models\Delivery;
+use App\Models\DeliveryAccount;
 use App\Models\Expense;
 use App\Models\ExpenseItem;
 use App\Models\FinancialGoal;
@@ -25,6 +27,7 @@ use App\Models\TaxFiling;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Models\VatSettings;
+use App\Services\FezDelivery;
 use App\Services\PaymentManager;
 use App\Services\StorePayouts;
 use App\Services\TaxReturns;
@@ -1165,7 +1168,7 @@ class OfficeController extends MerchantController
         if ($section === 'restock' && ! $managesSuppliers) {
             return redirect()->route('not-eligible');
         }
-        if (! in_array($section, ['business', 'vat', 'storefront', 'restock', 'subscription'], true)) {
+        if (! in_array($section, ['business', 'vat', 'storefront', 'delivery', 'restock', 'subscription'], true)) {
             $section = 'business';
         }
         $days = null;
@@ -1198,6 +1201,12 @@ class OfficeController extends MerchantController
                 ? (bool) $store->{app(PaymentManager::class)->active()->subaccountColumn()}
                 : false,
             'gatewayLabel' => $section === 'storefront' ? app(PaymentManager::class)->active()->label() : null,
+            'deliveryAccount' => $section === 'delivery' ? DeliveryAccount::query()->firstOrNew(['tenantId' => $tenant->id]) : null,
+            'deliveryStates' => $section === 'delivery' ? FezDelivery::states() : [],
+            'deliveryConfig' => $section === 'delivery' ? PlatformSetting::delivery() : null,
+            'deliveryAttention' => $section === 'delivery'
+                ? Delivery::query()->where('tenantId', $tenant->id)->whereIn('status', ['AWAITING_FEZ_PAYMENT', 'BOOKING_FAILED', 'BOOKING_UNCERTAIN'])->count()
+                : 0,
         ]);
     }
 

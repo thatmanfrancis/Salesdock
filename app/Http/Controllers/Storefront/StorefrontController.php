@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Storefront;
 
 use App\Http\Controllers\Controller;
+use App\Models\Delivery;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\PlatformSetting;
@@ -10,6 +11,8 @@ use App\Models\Product;
 use App\Models\StorefrontConfig;
 use App\Models\Tenant;
 use App\Services\BillingService;
+use App\Services\DeliveryBooking;
+use App\Services\FezDelivery;
 use App\Services\PaymentManager;
 use App\Services\SaleRecorder;
 use App\Services\StoreCart;
@@ -191,6 +194,40 @@ class StorefrontController extends Controller
             ->with('status', 'Item removed.');
     }
 
+    public function deliveryQuote(Request $request, string $slug, FezDelivery $fez, DeliveryBooking $booking)
+    {
+        [$tenant] = $this->store($slug);
+        $data = $request->validate([
+            'state' => ['required', 'string', 'in:'.implode(',', FezDelivery::states())],
+        ]);
+
+        $account = $fez->accountFor($tenant->id);
+        if (! $account) {
+            return response()->json(['ok' => false, 'message' => 'Fez delivery is not available for this shop.'], 422);
+        }
+
+        $lines = $this->cart->lines($tenant->id);
+        if ($lines->isEmpty()) {
+            return response()->json(['ok' => false, 'message' => 'Your cart is empty.'], 422);
+        }
+
+        try {
+            $weight = $booking->cartWeightKg($tenant->id, $lines, $account);
+            $quote = $fez->quote($account, $data['state'], $account->pickupState, $weight);
+        } catch (\Throwable $e) {
+            Log::warning('Fez quote failed', ['tenantId' => $tenant->id, 'error' => $e->getMessage()]);
+
+            return response()->json(['ok' => false, 'message' => 'We could not get a Fez delivery price right now. Choose pickup or try again.'], 422);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'fee' => $quote['totalCost'],
+            'weightKg' => $weight,
+            'message' => 'Fez delivery to '.$data['state'],
+        ]);
+    }
+
     public function checkoutForm(string $slug): View|RedirectResponse
     {
         [$tenant, $config] = $this->store($slug);
@@ -201,15 +238,19 @@ class StorefrontController extends Controller
                 ->with('status', 'Your cart is empty.');
         }
 
+        $deliveryAccount = app(FezDelivery::class)->accountFor($tenant->id);
+
         return $this->storeView('store.checkout', $tenant, $config, [
             'lines' => $this->cart->lines($tenant->id),
             'subtotal' => $this->cart->subtotal($tenant->id),
             'serviceRate' => $this->serviceRate(),
             'gatewayLabel' => app(PaymentManager::class)->active()->label(),
+            'deliveryAccount' => $deliveryAccount,
+            'deliveryStates' => FezDelivery::states(),
         ]);
     }
 
-    public function checkout(Request $request, string $slug, SaleRecorder $sales, PaymentManager $payments)
+    public function checkout(Request $request, string $slug, SaleRecorder $sales, PaymentManager $payments, FezDelivery $fez, DeliveryBooking $booking)
     {
         [$tenant, $config] = $this->store($slug);
         Turnstile::verify($request, 'checkout');
@@ -218,6 +259,10 @@ class StorefrontController extends Controller
             'customerEmail' => ['required', 'email'],
             'customerPhone' => ['required', 'string', 'max:50'],
             'customerAddress' => ['nullable', 'string', 'max:500'],
+            'deliveryMethod' => ['nullable', 'in:PICKUP,FEZ'],
+            'deliveryState' => ['nullable', 'string', 'in:'.implode(',', FezDelivery::states())],
+            'deliveryNotes' => ['nullable', 'string', 'max:500'],
+            'recipientAlternatePhone' => ['nullable', 'string', 'max:50'],
             'method' => ['required', 'in:CARD,TRANSFER'],
         ]);
 
@@ -225,6 +270,32 @@ class StorefrontController extends Controller
 
         if ($lines === []) {
             throw ValidationException::withMessages(['cart' => 'Add at least one product.']);
+        }
+
+        $deliveryMethod = (string) ($data['deliveryMethod'] ?? 'PICKUP');
+        $deliveryAccount = null;
+        $deliveryFee = 0.0;
+        $deliveryWeight = 0.0;
+
+        if ($deliveryMethod === 'FEZ') {
+            if (empty($data['deliveryState']) || empty($data['customerAddress'])) {
+                throw ValidationException::withMessages(['deliveryState' => 'Choose the delivery state and enter the full delivery address for Fez delivery.']);
+            }
+
+            $deliveryAccount = $fez->accountFor($tenant->id);
+            if (! $deliveryAccount) {
+                throw ValidationException::withMessages(['deliveryMethod' => 'Fez delivery is not available for this shop. Choose pickup instead.']);
+            }
+
+            try {
+                $cartLines = $this->cart->lines($tenant->id);
+                $deliveryWeight = $booking->cartWeightKg($tenant->id, $cartLines, $deliveryAccount);
+                $quote = $fez->quote($deliveryAccount, $data['deliveryState'], $deliveryAccount->pickupState, $deliveryWeight);
+                $deliveryFee = (float) $quote['totalCost'];
+            } catch (\Throwable $e) {
+                Log::warning('Fez checkout quote failed', ['tenantId' => $tenant->id, 'error' => $e->getMessage()]);
+                throw ValidationException::withMessages(['deliveryMethod' => 'We could not get a Fez delivery price right now. Choose pickup or try again.']);
+            }
         }
 
         $gateway = $payments->active();
@@ -235,9 +306,24 @@ class StorefrontController extends Controller
             'customerEmail' => $data['customerEmail'],
             'customerPhone' => $data['customerPhone'],
             'customerAddress' => $data['customerAddress'] ?? null,
+            'deliveryMethod' => $deliveryMethod,
+            'deliveryState' => $deliveryMethod === 'FEZ' ? $data['deliveryState'] : null,
+            'deliveryFee' => $deliveryFee,
             'serviceRate' => $data['method'] === 'CARD' ? $this->serviceRate() : 0,
             'complete' => false,
         ]);
+
+        if ($deliveryMethod === 'FEZ' && $deliveryAccount) {
+            $booking->createForOrder($order, $deliveryAccount, [
+                'name' => $data['customerName'],
+                'email' => $data['customerEmail'],
+                'phone' => $data['customerPhone'],
+                'alternatePhone' => $data['recipientAlternatePhone'] ?? null,
+                'address' => $data['customerAddress'],
+                'state' => $data['deliveryState'],
+                'notes' => $data['deliveryNotes'] ?? null,
+            ], $booking->pickupSnapshot($deliveryAccount, $tenant), $deliveryFee, $deliveryWeight);
+        }
 
         $this->cart->clear($tenant->id);
 
@@ -324,6 +410,7 @@ class StorefrontController extends Controller
             'order' => $order,
             'items' => $items,
             'products' => $products,
+            'delivery' => Delivery::query()->where('orderId', $order->id)->first(),
         ]);
     }
 

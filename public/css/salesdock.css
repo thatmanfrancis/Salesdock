@@ -1646,6 +1646,29 @@ a { color: var(--green); }
 
 .app .ui-menu button:hover { background: #f9fafb; }
 
+.app .ui-searchable-menu {
+    overflow: hidden;
+}
+.app .ui-searchable-menu > input[type="search"] {
+    width: 100%;
+    margin-bottom: 0.4rem;
+}
+.app .ui-select-options {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: min(16rem, 40dvh);
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+}
+.app .ui-searchable-menu > p {
+    margin: 0;
+    padding: 0.65rem;
+    color: #6b7280;
+    font-size: 0.8rem;
+}
+
 .app .ui-calendar { right: auto; width: 16.5rem; padding: 0.7rem; }
 
 .app .ui-filter-dates .ui-field:last-child .ui-calendar { left: auto; right: 0; }

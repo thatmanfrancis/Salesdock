@@ -7,6 +7,7 @@
     $cardTotal     = $subtotal + $serviceFee;
     $method        = old('method', 'CARD');
     $displayTotal  = $method === 'CARD' ? $cardTotal : $subtotal;
+    $deliveryMethod = old('deliveryMethod', 'PICKUP');
 @endphp
 
 @section('content')
@@ -34,8 +35,40 @@
                     <span>Phone</span>
                     <input name="customerPhone" value="{{ old('customerPhone') }}" required autocomplete="tel">
                 </label>
+                @if ($deliveryAccount)
+                    <label>
+                        <span>Delivery method</span>
+                        <select name="deliveryMethod" id="delivery-method">
+                            <option value="PICKUP" @selected($deliveryMethod === 'PICKUP')>Pickup from shop</option>
+                            <option value="FEZ" @selected($deliveryMethod === 'FEZ')>Fez Delivery</option>
+                        </select>
+                    </label>
+                    <div id="fez-fields" @if($deliveryMethod !== 'FEZ') style="display:none" @endif>
+                        <label>
+                            <span>Delivery state</span>
+                            <select name="deliveryState" id="delivery-state">
+                                <option value="">Choose state…</option>
+                                @foreach ($deliveryStates as $state)
+                                    <option value="{{ $state }}" @selected(old('deliveryState') === $state)>{{ $state }}</option>
+                                @endforeach
+                            </select>
+                        </label>
+                        <label>
+                            <span>Alternate phone (optional)</span>
+                            <input name="recipientAlternatePhone" value="{{ old('recipientAlternatePhone') }}" autocomplete="tel">
+                        </label>
+                        <label>
+                            <span>Landmark / delivery note (optional)</span>
+                            <textarea name="deliveryNotes" rows="2" placeholder="Nearest landmark, gate colour, estate, etc.">{{ old('deliveryNotes') }}</textarea>
+                        </label>
+                        <p class="sf-hint" id="delivery-quote-note">Choose a state to get the Fez delivery price. The final price is confirmed again when you place the order.</p>
+                    </div>
+                @else
+                    <input type="hidden" name="deliveryMethod" value="PICKUP">
+                    <p class="sf-hint">Pickup from the shop. This shop has not enabled Fez delivery.</p>
+                @endif
                 <label>
-                    <span>Delivery address</span>
+                    <span>{{ $deliveryAccount ? 'Delivery / pickup address' : 'Delivery address' }}</span>
                     <textarea name="customerAddress" rows="3" placeholder="Street, area, city">{{ old('customerAddress') }}</textarea>
                 </label>
                 <label>
@@ -70,8 +103,12 @@
             <div class="sf-summary-fees">
                 <p><span>Subtotal</span><span>₦{{ number_format($subtotal, 2) }}</span></p>
                 <p id="fee-row" @if($method !== 'CARD') style="display:none" @endif>
-                    <span>Service charge (1.5%)</span>
+                    <span>Service charge ({{ rtrim(rtrim(number_format($serviceRate * 100, 2), '0'), '.') }}%)</span>
                     <span id="fee-amount">₦{{ number_format($serviceFee, 2) }}</span>
+                </p>
+                <p id="delivery-fee-row" @if($deliveryMethod !== 'FEZ') style="display:none" @endif>
+                    <span>Fez delivery</span>
+                    <span id="delivery-fee-amount">₦0.00</span>
                 </p>
             </div>
             <p class="sf-cart-total" id="summary-total">
@@ -89,6 +126,14 @@
             var feeAmt      = document.getElementById('fee-amount');
             var summaryTotal = document.getElementById('summary-total').querySelector('strong');
             var btnAmount   = document.getElementById('btn-amount');
+            var deliveryMethod = document.getElementById('delivery-method');
+            var deliveryState = document.getElementById('delivery-state');
+            var fezFields = document.getElementById('fez-fields');
+            var deliveryRow = document.getElementById('delivery-fee-row');
+            var deliveryAmt = document.getElementById('delivery-fee-amount');
+            var deliveryNote = document.getElementById('delivery-quote-note');
+            var deliveryFee = 0;
+            var quoteSeq = 0;
             @if($config->bankName)
             var transferHint = document.getElementById('transfer-hint');
             @endif
@@ -100,10 +145,12 @@
             function update() {
                 var isCard = method.value === 'CARD';
                 var fee    = isCard ? Math.round(subtotal * serviceRate * 100) / 100 : 0;
-                var total  = subtotal + fee;
+                var total  = subtotal + fee + deliveryFee;
 
                 if (feeRow)   feeRow.style.display   = isCard ? '' : 'none';
                 if (feeAmt)   feeAmt.textContent      = fmt(fee);
+                if (deliveryRow) deliveryRow.style.display = deliveryMethod && deliveryMethod.value === 'FEZ' ? '' : 'none';
+                if (deliveryAmt) deliveryAmt.textContent = fmt(deliveryFee);
                 if (summaryTotal) summaryTotal.textContent = fmt(total);
                 if (btnAmount)    btnAmount.textContent    = fmt(total);
                 @if($config->bankName)
@@ -111,8 +158,44 @@
                 @endif
             }
 
+            function refreshQuote() {
+                if (!deliveryMethod || deliveryMethod.value !== 'FEZ') {
+                    deliveryFee = 0;
+                    if (fezFields) fezFields.style.display = 'none';
+                    update();
+                    return;
+                }
+                if (fezFields) fezFields.style.display = '';
+                if (!deliveryState || !deliveryState.value) {
+                    deliveryFee = 0;
+                    if (deliveryNote) deliveryNote.textContent = 'Choose a state to get the Fez delivery price.';
+                    update();
+                    return;
+                }
+                var seq = ++quoteSeq;
+                if (deliveryNote) deliveryNote.textContent = 'Getting Fez delivery price…';
+                fetch('{{ route('store.delivery-quote', $tenant->slug) }}?state=' + encodeURIComponent(deliveryState.value), { headers: { 'Accept': 'application/json' } })
+                    .then(function (response) { return response.json().then(function (body) { return { ok: response.ok, body: body }; }); })
+                    .then(function (result) {
+                        if (seq !== quoteSeq) return;
+                        if (!result.ok || !result.body.ok) throw new Error(result.body.message || 'Quote failed');
+                        deliveryFee = Number(result.body.fee || 0);
+                        if (deliveryNote) deliveryNote.textContent = 'Fez delivery price confirmed for this cart. It will be checked again at order placement.';
+                        update();
+                    })
+                    .catch(function (error) {
+                        if (seq !== quoteSeq) return;
+                        deliveryFee = 0;
+                        if (deliveryNote) deliveryNote.textContent = error.message || 'Could not get a Fez delivery price.';
+                        update();
+                    });
+            }
+
             method.addEventListener('change', update);
+            if (deliveryMethod) deliveryMethod.addEventListener('change', refreshQuote);
+            if (deliveryState) deliveryState.addEventListener('change', refreshQuote);
             update();
+            refreshQuote();
         })();
     </script>
 @endsection

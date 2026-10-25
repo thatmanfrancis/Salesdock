@@ -35,9 +35,8 @@
                 </p>
             </div>
 
-            <form method="get" action="{{ route('products.starter') }}" class="branch-pick" style="margin-bottom:1rem">
-                <x-ui.select name="category" label="Show category" :value="$pickedCategory" :options="$categoryOptions" />
-                <button type="submit">Show</button>
+            <form method="get" action="{{ route('products.starter') }}" id="starter-category-form" class="branch-pick" style="margin-bottom:1rem">
+                <x-ui.select name="category" label="Show category" :value="$pickedCategory" :options="$categoryOptions" :searchable="true" />
             </form>
 
             @if ($items->isEmpty())
@@ -122,6 +121,11 @@
     </div>
 
     <script>
+        const categoryForm = document.getElementById('starter-category-form');
+        categoryForm?.addEventListener('change', (event) => {
+            if (event.target.name === 'category') categoryForm.requestSubmit();
+        });
+
         const form    = document.getElementById('starter-form');
         const countEl = document.getElementById('starter-count');
         const submit  = document.getElementById('starter-submit');

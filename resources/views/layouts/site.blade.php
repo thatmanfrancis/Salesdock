@@ -8,6 +8,7 @@
     <link rel="canonical" href="{{ url()->current() }}">
     @include('partials.favicon')
     @include('partials.google-analytics')
+    @include('partials.meta-pixel')
     <link rel="preconnect" href="https://fonts.bunny.net">
     <link href="https://fonts.bunny.net/css?family=space-grotesk:400,500,600,700" rel="stylesheet">
     <style>
@@ -76,6 +77,7 @@
     @stack('styles')
 </head>
 <body>
+    @include('partials.meta-pixel-noscript')
     <header class="site-nav">
         <div class="container inner">
             <a href="{{ route('home') }}" class="logo"><img src="{{ asset('SalesDock.svg') }}" alt="SalesDock"></a>

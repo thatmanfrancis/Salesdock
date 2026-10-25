@@ -43,6 +43,7 @@ class Product extends Model
     {
         return [
             'price' => 'decimal:2',
+            'weightKg' => 'decimal:2',
             'originalPrice' => 'decimal:2',
             'costPrice' => 'decimal:2',
             'wholesalePrice' => 'decimal:2',

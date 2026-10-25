@@ -36,6 +36,7 @@ class Order extends Model
             'discountAmount' => 'decimal:2',
             'taxAmount' => 'decimal:2',
             'netAmount' => 'decimal:2',
+            'deliveryFee' => 'decimal:2',
             'cancelledAt' => 'datetime',
             'cancelRequested' => 'boolean',
             'returnedAt' => 'datetime',

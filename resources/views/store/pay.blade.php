@@ -9,6 +9,9 @@
         @if ((float) $order->serviceCharge > 0)
             <p class="muted">Includes ₦{{ number_format($order->serviceCharge, 2) }} service charge (1.5%).</p>
         @endif
+        @if ((float) ($order->deliveryFee ?? 0) > 0)
+            <p class="muted">Includes ₦{{ number_format((float) $order->deliveryFee, 2) }} Fez delivery fee.</p>
+        @endif
         @if ($errors->any())
             <p class="sf-flash error" role="alert">{{ $errors->first() }}</p>
         @endif

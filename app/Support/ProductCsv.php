@@ -67,6 +67,7 @@ class ProductCsv
             $char = $text[$i];
             if ($char === '"') {
                 $quoted = ! $quoted;
+                $current .= $char;
             } elseif ($char === "\n" && ! $quoted) {
                 $lines[] = $current;
                 $current = '';
@@ -83,6 +84,6 @@ class ProductCsv
 
     private static function key(string $value): string
     {
-        return preg_replace('/\s+/', ' ', strtolower(trim(str_replace(['_', '-'], ' ', $value)))) ?? '';
+        return preg_replace('/\s+/', ' ', strtolower(trim(str_replace(['_', '-'], ' ', ltrim($value, "\xEF\xBB\xBF"))))) ?? '';
     }
 }

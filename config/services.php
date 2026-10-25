@@ -85,6 +85,18 @@ return [
         'secret_key' => env('PAYSTACK_SECRET_KEY'),
     ],
 
+    /*
+    | Fez Delivery. Merchants connect their own Fez Business account in
+    | Settings → Delivery; these values only set platform defaults/endpoints.
+    */
+    'fez' => [
+        'enabled' => (bool) env('FEZ_ENABLED', true),
+        'sandbox_base_url' => env('FEZ_SANDBOX_BASE_URL', 'https://apisandbox.fezdelivery.co/v1'),
+        'production_base_url' => env('FEZ_PRODUCTION_BASE_URL', ''),
+        'portal_url' => env('FEZ_PORTAL_URL', ''),
+        'support_url' => env('FEZ_SUPPORT_URL', ''),
+    ],
+
     'turnstile' => [
         'site_key' => env('TURNSTILE_SITE_KEY'),
         'secret' => env('TURNSTILE_SECRET'),

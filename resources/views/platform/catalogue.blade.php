@@ -220,7 +220,7 @@
 
             <form method="post" action="{{ route('admin.catalogue.import') }}" enctype="multipart/form-data" data-busy data-panel="csv" @unless ($itemTab === 'csv') hidden @endunless>
                 @csrf
-                <p class="muted">Name and category are required on every row. Download the template so the columns match what SalesDock expects.</p>
+                <p class="muted">Name and category are required on every row. An optional SKU is kept when shops import the item. Existing items and duplicate SKUs are skipped. Download the template for the supported columns.</p>
                 <div class="csv-file" data-csv>
                     <input type="file" name="file" accept=".csv,text/csv" required data-csv-input>
                     <button type="button" data-csv-open>Choose CSV</button>

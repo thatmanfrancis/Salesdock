@@ -14,3 +14,4 @@ Schedule::command('subscriptions:downgrade')->dailyAt('00:10')->timezone('Africa
 Schedule::command('subscriptions:end-trials')->dailyAt('08:00')->timezone('Africa/Lagos');
 Schedule::command('tenants:purge')->dailyAt('02:00')->timezone('Africa/Lagos');
 Schedule::command('registrations:prune')->dailyAt('02:30')->timezone('Africa/Lagos');
+Schedule::command('deliveries:sync-fez')->everyFifteenMinutes()->timezone('Africa/Lagos');

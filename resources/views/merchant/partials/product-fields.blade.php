@@ -36,6 +36,7 @@
         </label>
         <label class="wide">Description <textarea name="description">{{ old('description', $product->description ?? '') }}</textarea></label>
         <label>Price <span class="req">*</span> <input type="number" name="price" step="0.01" min="0" value="{{ old('price', $product->price ?? '') }}" required></label>
+        <label>Weight (kg, for Fez delivery) <input type="number" name="weightKg" step="0.01" min="0" max="1000" value="{{ old('weightKg', $product->weightKg ?? '') }}" placeholder="Uses shop default if blank"></label>
         <label>Original price <input type="number" name="originalPrice" step="0.01" min="0" value="{{ old('originalPrice', $product->originalPrice ?? '') }}"></label>
         @if ($costs)
             <label>Cost price <input type="number" name="costPrice" step="0.01" min="0" value="{{ old('costPrice', $product->costPrice ?? 0) }}"></label>

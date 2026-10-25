@@ -9,6 +9,7 @@ class CatalogueCsv
 {
     private const HEADERS = [
         'name' => ['name', 'product name', 'title', 'product', 'item'],
+        'sku' => ['sku', 'code', 'item code', 'product code'],
         'brand' => ['brand', 'manufacturer'],
         'category' => ['category', 'type', 'dept', 'department'],
         'unit' => ['unit', 'uom', 'unit of measure', 'pack'],
@@ -17,7 +18,7 @@ class CatalogueCsv
     ];
 
     /**
-     * @return list<array{name: ?string, brand: ?string, category: ?string, unit: ?string, barcode: ?string, description: ?string}>
+     * @return list<array{name: ?string, sku: ?string, brand: ?string, category: ?string, unit: ?string, barcode: ?string, description: ?string}>
      */
     public static function parse(string $text): array
     {
@@ -43,7 +44,7 @@ class CatalogueCsv
     }
 
     /**
-     * @return array{name: ?string, brand: ?string, category: ?string, unit: ?string, barcode: ?string, description: ?string}
+     * @return array{name: ?string, sku: ?string, brand: ?string, category: ?string, unit: ?string, barcode: ?string, description: ?string}
      */
     private static function map(array $row): array
     {
@@ -74,6 +75,7 @@ class CatalogueCsv
             $char = $text[$i];
             if ($char === '"') {
                 $quoted = ! $quoted;
+                $current .= $char;
             } elseif ($char === "\n" && ! $quoted) {
                 $lines[] = $current;
                 $current = '';
@@ -90,6 +92,6 @@ class CatalogueCsv
 
     private static function key(string $header): string
     {
-        return preg_replace('/[^a-z0-9]+/', '', strtolower(trim($header))) ?? '';
+        return preg_replace('/[^a-z0-9]+/', '', strtolower(trim(ltrim($header, "\xEF\xBB\xBF")))) ?? '';
     }
 }

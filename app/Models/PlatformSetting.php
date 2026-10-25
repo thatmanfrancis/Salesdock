@@ -333,6 +333,41 @@ class PlatformSetting extends Model
         ]);
     }
 
+    /**
+     * Global Fez Delivery controls. Merchants connect their own Fez Business
+     * account and fund Fez directly; SalesDock never collects delivery top-ups.
+     *
+     * @return array{enabled: bool, sandbox_base_url: string, production_base_url: string, portal_url: string, support_url: string}
+     */
+    public static function delivery(): array
+    {
+        $saved = static::read('delivery');
+        $saved = is_array($saved) ? $saved : [];
+
+        return [
+            'enabled' => array_key_exists('enabled', $saved) ? (bool) $saved['enabled'] : (bool) config('services.fez.enabled', true),
+            'sandbox_base_url' => rtrim((string) ($saved['sandbox_base_url'] ?? config('services.fez.sandbox_base_url', 'https://apisandbox.fezdelivery.co/v1')), '/'),
+            'production_base_url' => rtrim((string) ($saved['production_base_url'] ?? config('services.fez.production_base_url', '')), '/'),
+            'portal_url' => trim((string) ($saved['portal_url'] ?? config('services.fez.portal_url', ''))),
+            'support_url' => trim((string) ($saved['support_url'] ?? config('services.fez.support_url', ''))),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     */
+    public static function writeDelivery(array $input): void
+    {
+        $current = static::delivery();
+        static::write('delivery', [
+            'enabled' => (bool) ($input['enabled'] ?? $current['enabled']),
+            'sandbox_base_url' => rtrim(trim((string) ($input['sandbox_base_url'] ?? $current['sandbox_base_url'])), '/'),
+            'production_base_url' => rtrim(trim((string) ($input['production_base_url'] ?? $current['production_base_url'])), '/'),
+            'portal_url' => trim((string) ($input['portal_url'] ?? $current['portal_url'])),
+            'support_url' => trim((string) ($input['support_url'] ?? $current['support_url'])),
+        ]);
+    }
+
     private static function credential(?string $saved, string $fallback): string
     {
         $saved = trim((string) $saved);

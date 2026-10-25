@@ -46,6 +46,9 @@
                         @if ((float) $order->discountAmount > 0)
                             <div class="off"><span>Discount</span><span>−{{ $money($order->discountAmount) }}</span></div>
                         @endif
+                        @if ((float) ($order->deliveryFee ?? 0) > 0)
+                            <div><span>Fez delivery</span><span>{{ $money($order->deliveryFee) }}</span></div>
+                        @endif
                         <div class="grand"><span>Total</span><span>{{ $money($order->totalAmount) }}</span></div>
                     </div>
                 </section>
@@ -60,6 +63,63 @@
                                 <span class="badge {{ strtolower($txn->status) }}">{{ $txn->status }}</span>
                             </div>
                         @endforeach
+                    </section>
+                @endif
+
+                @if ($delivery)
+                    <section class="card orders">
+                        <p class="kicker band">Fez delivery</p>
+                        @if ($errors->has('delivery'))
+                            <p class="note ended">{{ $errors->first('delivery') }}</p>
+                        @endif
+                        <div class="totals">
+                            <div><span>Status</span><span>{{ str_replace('_', ' ', $delivery->status) }}</span></div>
+                            @if ($delivery->providerStatus)
+                                <div><span>Fez status</span><span>{{ $delivery->providerStatus }}</span></div>
+                            @endif
+                            @if ($delivery->paymentStatus)
+                                <div><span>Fez payment</span><span>{{ $delivery->paymentStatus }}</span></div>
+                            @endif
+                            <div><span>Fez order no.</span><span>{{ $delivery->providerOrderNo ?: 'Not booked yet' }}</span></div>
+                            <div><span>Customer paid</span><span>{{ $money($delivery->quotedFee) }}</span></div>
+                            @if ($delivery->actualFee)
+                                <div><span>Fez charged</span><span>{{ $money($delivery->actualFee) }}</span></div>
+                            @endif
+                            <div><span>Weight</span><span>{{ number_format((float) $delivery->weightKg, 2) }} kg</span></div>
+                            <div><span>To</span><span>{{ ($delivery->recipient['name'] ?? $order->customerName) }} · {{ ($delivery->recipient['state'] ?? $order->deliveryState) }}</span></div>
+                            <div><span>Address</span><span>{{ ($delivery->recipient['address'] ?? $order->customerAddress) }}</span></div>
+                        </div>
+                        @if ($delivery->status === 'AWAITING_FEZ_PAYMENT')
+                            <p class="note soon">Fez is waiting for payment from <strong>your Fez wallet</strong>. Top up in the Fez app or Business Portal, then click Refresh status. SalesDock does not collect this top-up.</p>
+                        @elseif ($delivery->status === 'BOOKING_FAILED')
+                            <p class="note ended">Booking failed{{ $delivery->lastError ? ': '.$delivery->lastError : '' }}. Fix the issue (often Fez wallet funds), then retry. SalesDock reuses the same delivery reference.</p>
+                        @elseif ($delivery->status === 'BOOKING_UNCERTAIN')
+                            <p class="note soon">SalesDock could not confirm whether Fez created this delivery. Refresh/check Fez before retrying so it is not duplicated.</p>
+                        @elseif ($delivery->lastError)
+                            <p class="hint">{{ $delivery->lastError }}</p>
+                        @endif
+                        @if ($delivery->proofOfDelivery)
+                            <p class="hint">Proof of delivery: {{ $delivery->proofOfDelivery }}</p>
+                        @endif
+                        <div class="ui-modal-actions">
+                            @if ($shop && $order->status === 'COMPLETED' && in_array($delivery->status, ['NOT_BOOKED', 'BOOKING_FAILED'], true))
+                                <form method="post" action="{{ route('orders.delivery.book', $order) }}">@csrf<button type="submit">{{ $delivery->status === 'BOOKING_FAILED' ? 'Retry Fez booking' : 'Book Fez pickup' }}</button></form>
+                            @endif
+                            @if ($delivery->providerOrderNo && !in_array($delivery->status, ['DELIVERED', 'CANCELLED', 'RETURNED'], true))
+                                <form method="post" action="{{ route('deliveries.refresh', $delivery) }}">@csrf<button class="tool" type="submit">Refresh status</button></form>
+                                <form method="post" action="{{ route('deliveries.cancel', $delivery) }}" onsubmit="return confirm('Cancel this Fez delivery? Any eligible refund goes to your Fez wallet.');">@csrf<input type="hidden" name="reason" value="Cancelled from SalesDock"><button class="quiet" type="submit">Cancel delivery</button></form>
+                            @endif
+                            @if ($deliveryPortalUrl)
+                                <a class="tool" href="{{ $deliveryPortalUrl }}" target="_blank" rel="noreferrer">Open Fez portal</a>
+                            @endif
+                        </div>
+                        @if ($delivery->events->isNotEmpty())
+                            <div class="txn-list">
+                                @foreach ($delivery->events as $event)
+                                    <div class="txn"><span>{{ str_replace('_', ' ', $event->status) }}{{ $event->description ? ' — '.$event->description : '' }}</span><span>{{ $event->occurredAt?->format('d M H:i') }}</span></div>
+                                @endforeach
+                            </div>
+                        @endif
                     </section>
                 @endif
 

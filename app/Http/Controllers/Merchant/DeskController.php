@@ -5,11 +5,13 @@ namespace App\Http\Controllers\Merchant;
 use App\Models\Branch;
 use App\Models\CatalogueProduct;
 use App\Models\Customer;
+use App\Models\Delivery;
 use App\Models\Hold;
 use App\Models\Notification;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Plan;
+use App\Models\PlatformSetting;
 use App\Models\Product;
 use App\Models\ProductVariant;
 use App\Models\Promotion;
@@ -448,7 +450,7 @@ class DeskController extends MerchantController
         }
         $this->saveNewProduct([
             'name' => $item->name,
-            'sku' => $this->skuFromName($item->name),
+            'sku' => $item->sku ?? $this->skuFromName($item->name),
             'barcode' => $item->barcode,
             'category' => $item->category ?: 'General',
             'description' => $item->description,
@@ -487,15 +489,17 @@ class DeskController extends MerchantController
             $picked = '';
         }
 
+        $suggestedCategories = $availableCategories->filter(fn (string $category): bool => in_array(
+            mb_strtolower(trim(explode('>', $category, 2)[0])),
+            array_map(mb_strtolower(...), $suggested),
+            true,
+        ))->all();
+
         $query = CatalogueProduct::query()->where('isActive', true)->orderBy('category')->orderBy('name');
         if ($picked !== '') {
             $query->whereRaw('lower(category) = ?', [mb_strtolower($picked)]);
-        } elseif ($suggested !== []) {
-            $query->where(function ($q) use ($suggested) {
-                foreach ($suggested as $cat) {
-                    $q->orWhereRaw('lower(category) = ?', [mb_strtolower($cat)]);
-                }
-            });
+        } elseif ($suggestedCategories !== []) {
+            $query->whereIn('category', $suggestedCategories);
         }
 
         $items = $query->limit(max(1, $remaining + 80))->get();
@@ -507,7 +511,7 @@ class DeskController extends MerchantController
             ->map(fn ($n) => mb_strtolower($n))
             ->all();
 
-        $categoryOptions = ['' => $suggested !== [] ? 'Suggested for '.$businessType : 'All categories'];
+        $categoryOptions = ['' => $suggestedCategories !== [] ? 'Suggested for '.$businessType : 'All categories'];
         foreach ($availableCategories as $name) {
             $categoryOptions[$name] = $name;
         }
@@ -566,6 +570,7 @@ class DeskController extends MerchantController
             try {
                 $this->saveNewProduct([
                     'name' => $item->name,
+                    'sku' => $item->sku,
                     'barcode' => $item->barcode,
                     'category' => $item->category ?: 'General',
                     'description' => $item->description,
@@ -575,9 +580,11 @@ class DeskController extends MerchantController
                     'availabilityMode' => 'BOTH',
                 ]);
                 $saved++;
-            } catch (ValidationException) {
+            } catch (ValidationException $exception) {
                 $skipped++;
-                break; // hit plan limit mid-loop
+                if (str_contains((string) collect($exception->errors())->flatten()->first(), 'product limit')) {
+                    break;
+                }
             }
         }
 
@@ -598,14 +605,14 @@ class DeskController extends MerchantController
         }
 
         $map = [
-            'Supermarket' => ['Food', 'Grocery', 'Beverages', 'General', 'Household'],
-            'Fashion' => ['Fashion', 'Clothing', 'Accessories', 'Footwear', 'Apparel'],
-            'Electronics' => ['Electronics', 'Gadgets', 'Accessories', 'Cables'],
-            'Pharmacy' => ['Pharmacy', 'Medicine', 'Health', 'Personal Care', 'Wellness'],
-            'Restaurant' => ['Food', 'Beverages', 'Drinks', 'Snacks'],
-            'Grocery' => ['Grocery', 'Food', 'Beverages', 'Household'],
-            'Beauty' => ['Beauty', 'Cosmetics', 'Skincare', 'Hair Care', 'Personal Care'],
-            'Hardware' => ['Hardware', 'Tools', 'Building', 'Electrical'],
+            'Supermarket' => ['Food', 'Grocery', 'Beverages', 'General', 'Household', 'Food Cupboard', 'Dairy', 'Breakfast', 'Cooking Oils', 'Seasoning & Spices', 'Snacks & Confectionery', 'Canned & Packaged Foods', 'Fresh Produce', 'Frozen & Fresh Protein', 'Grains, Legumes & Seeds', 'Market Staples', 'Baby Food'],
+            'Fashion' => ['Fashion', 'Clothing', 'Accessories', 'Footwear', 'Apparel', "Men's Clothing", "Women's Clothing", "Kids' Clothing", 'Baby Clothing', "Men's Footwear", "Women's Footwear", "Kids' Footwear", 'Fabrics', 'Bags'],
+            'Electronics' => ['Electronics', 'Gadgets', 'Accessories', 'Cables', 'Mobile Phones', 'Computing', 'Tablets', 'Wearables', 'TVs & Audio', 'Audio', 'Power', 'Solar Energy', 'Kitchen Appliances', 'Cooling'],
+            'Pharmacy' => ['Pharmacy', 'Medicine', 'Health', 'Personal Care', 'Wellness', 'Pain & Fever', 'Antimalarials', 'Anti-Infectives (Rx)', 'Chronic Care (Rx)', 'Cough, Cold & Allergy', 'Digestive Health', 'Eye & Ear Care', 'First Aid', 'Medical Devices', 'Vitamins & Supplements', 'Sexual & Reproductive Health'],
+            'Restaurant' => ['Food', 'Beverages', 'Drinks', 'Snacks', 'Bulk Ingredients', 'Cooking Oils', 'Seasoning & Spices', 'Fresh Produce', 'Frozen & Fresh Protein', 'Grains, Legumes & Seeds', 'Commercial Cookware', 'Cooking Equipment', 'Disposables & Packaging'],
+            'Grocery' => ['Grocery', 'Food', 'Beverages', 'Household', 'Food Cupboard', 'Dairy', 'Breakfast', 'Cooking Oils', 'Seasoning & Spices', 'Snacks & Confectionery', 'Canned & Packaged Foods', 'Fresh Produce', 'Frozen & Fresh Protein', 'Grains, Legumes & Seeds', 'Market Staples'],
+            'Beauty' => ['Beauty', 'Cosmetics', 'Skincare', 'Hair Care', 'Personal Care', 'Skin Care', 'Makeup', 'Fragrance', 'Barbing', 'Hair Salon', 'Nail & Beauty Services', 'Salon Equipment'],
+            'Hardware' => ['Hardware', 'Tools', 'Building', 'Electrical', 'Cement & Aggregates', 'Roofing', 'Steel & Metal', 'Wood', 'Plumbing', 'Paints', 'Doors & Windows', 'Tiles & Flooring', 'Lighting & Electricals', 'Safety'],
             'General' => ['General'],
         ];
 
@@ -871,6 +878,8 @@ class DeskController extends MerchantController
             'choices' => ['' => 'Select status…'] + $choices,
             'needsPin' => ! Approval::canAuthorize($this->user()),
             'canRequestRefund' => $this->canRequestRefund($order),
+            'delivery' => Delivery::query()->with('events')->where('orderId', $order->id)->first(),
+            'deliveryPortalUrl' => PlatformSetting::delivery()['portal_url'],
         ]);
     }
 
@@ -1795,6 +1804,7 @@ class DeskController extends MerchantController
             'description' => ['nullable', 'string'],
             'categoryNew' => ['nullable', 'string', 'max:120'],
             'price' => ['required', 'numeric', 'min:0'],
+            'weightKg' => ['nullable', 'numeric', 'min:0', 'max:1000'],
             'originalPrice' => ['nullable', 'numeric', 'min:0'],
             'costPrice' => ['nullable', 'numeric', 'min:0'],
             'wholesalePrice' => ['nullable', 'numeric', 'min:0'],
@@ -1825,6 +1835,7 @@ class DeskController extends MerchantController
         $data['wholesalePrice'] = ($data['wholesalePrice'] ?? '') !== '' ? $data['wholesalePrice'] : null;
         $data['originalPrice'] = ($data['originalPrice'] ?? '') !== '' ? $data['originalPrice'] : $data['price'];
         $data['vatRateOverride'] = ($data['vatRateOverride'] ?? '') !== '' ? $data['vatRateOverride'] : null;
+        $data['weightKg'] = ($data['weightKg'] ?? '') !== '' ? $data['weightKg'] : null;
 
         return $data;
     }
