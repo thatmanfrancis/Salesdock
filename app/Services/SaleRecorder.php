@@ -16,6 +16,7 @@ use App\Models\PlatformSetting;
 use App\Models\Product;
 use App\Models\SalesLedger;
 use App\Models\SalesLedgerItem;
+use App\Models\Tenant;
 use App\Models\Transaction;
 use App\Models\VatSettings;
 use Illuminate\Support\Facades\DB;
@@ -33,6 +34,26 @@ class SaleRecorder
         }
 
         return DB::transaction(function () use ($tenantId, $lines, $meta) {
+            $tenant = Tenant::query()->lockForUpdate()->findOrFail($tenantId);
+            if (! empty($meta['checkoutRequestId'])) {
+                $existing = Order::query()->where('tenantId', $tenantId)->where('checkoutRequestId', $meta['checkoutRequestId'])->first();
+                if ($existing) {
+                    if ($existing->cashierId !== ($meta['cashierId'] ?? null)) {
+                        throw ValidationException::withMessages(['payment' => 'This checkout reference has already been used.']);
+                    }
+
+                    return $existing;
+                }
+            }
+            $method = $meta['method'] ?? 'CASH';
+            $isPos = ($meta['channel'] ?? 'POS') === 'POS';
+            if ($isPos && $tenant->cashlessOnly && $method === 'CASH') {
+                throw ValidationException::withMessages(['method' => 'Cash payments are disabled for this business.']);
+            }
+            $verificationRequired = $isPos && $tenant->requireVerifiedPayments;
+            if ($verificationRequired && in_array($method, ['CASH', 'POS_TERMINAL'], true)) {
+                throw ValidationException::withMessages(['method' => 'Use card or transfer through verified online checkout. Physical terminals must be connected before they can confirm payments.']);
+            }
             if (! empty($meta['resumeHoldId'])) {
                 $held = Hold::query()->where('tenantId', $tenantId)->whereKey($meta['resumeHoldId'])->first();
                 if ($held?->status === 'ACTIVE') {
@@ -45,7 +66,7 @@ class SaleRecorder
             $rateDefault = (float) ($vat->globalVatRate ?? 7.5);
             $inclusive = (bool) ($vat->isInclusive ?? false);
             $discount = max(0, (float) ($meta['discount'] ?? 0));
-            $complete = (bool) ($meta['complete'] ?? true);
+            $complete = (bool) ($meta['complete'] ?? true) && ! $verificationRequired;
 
             $gross = 0;
             $tax = 0;
@@ -64,7 +85,7 @@ class SaleRecorder
                     throw ValidationException::withMessages(['cart' => "{$product->name} only has {$free} available."]);
                 }
                 if (! empty($meta['branchId'])) {
-                    $atBranch = $this->stock->quantityAt($product, $meta['branchId']);
+                    $atBranch = $this->stock->availableQuantitiesAt($tenantId, $meta['branchId'], [$product->id])[$product->id];
                     if ($atBranch < $qty) {
                         throw ValidationException::withMessages(['cart' => "{$product->name} only has {$atBranch} at this branch."]);
                     }
@@ -123,6 +144,8 @@ class SaleRecorder
                 'customerAddress' => $meta['customerAddress'] ?? $customer?->address,
                 'paymentRef' => $meta['paymentRef'] ?? ($complete ? null : 'SD-'.strtoupper(Str::random(10))),
                 'notes' => $meta['notes'] ?? null,
+                'paymentVerificationRequired' => $verificationRequired,
+                'checkoutRequestId' => $meta['checkoutRequestId'] ?? null,
             ]);
 
             foreach ($prepared as $row) {
@@ -143,18 +166,18 @@ class SaleRecorder
                 }
             }
 
-            $method = $meta['method'] ?? 'CASH';
             $transaction = Transaction::query()->create([
                 'orderId' => $order->id,
                 'tenantId' => $tenantId,
-                'gateway' => $method === 'CARD'
+                'gateway' => $verificationRequired || $method === 'CARD'
                     ? strtoupper((string) (PlatformSetting::payment()['provider'] ?? 'CARD'))
-                    : ($method === 'TRANSFER' ? 'TRANSFER' : 'CASH'),
+                    : ($method === 'TRANSFER' ? 'TRANSFER' : ($method === 'POS_TERMINAL' ? 'POS_TERMINAL' : 'CASH')),
                 'method' => $method,
                 'amount' => $netAmount,
                 'status' => $complete ? 'SUCCESS' : 'PENDING',
                 'reference' => $order->paymentRef,
                 'completedAt' => $complete ? now() : null,
+                'metadata' => ['branchId' => $order->branchId, 'cashierId' => $order->cashierId],
             ]);
 
             if ($complete) {
@@ -172,10 +195,18 @@ class SaleRecorder
         }
 
         $run = function () use ($hold, $status, $reason) {
+            $order = Order::query()->lockForUpdate()->findOrFail($hold->orderId);
+            $hold = Hold::query()->lockForUpdate()->findOrFail($hold->id);
+            if ($hold->status !== 'ACTIVE' || ! in_array($order->status, ['PENDING', 'RESERVED'], true)) {
+                return;
+            }
             $items = OrderItem::query()->where('orderId', $hold->orderId)->get();
             foreach ($items as $item) {
                 $product = Product::query()->where('tenantId', $hold->tenantId)->lockForUpdate()->find($item->productId);
                 if ($product) {
+                    if ($order->status === 'RESERVED') {
+                        $this->stock->add($product, (int) $item->quantity, $order->branchId, 'RETURN', ['reference' => $order->id]);
+                    }
                     $product->forceFill([
                         'reservedQty' => max(0, (int) $product->reservedQty - (int) $item->quantity),
                     ])->save();
@@ -202,16 +233,24 @@ class SaleRecorder
         DB::transactionLevel() > 0 ? $run() : DB::transaction($run);
     }
 
-    public function completePending(Order $order, string $gatewayRef): Order
+    public function completePending(Order $order, string $gatewayRef, bool $verified = false): Order
     {
-        if ($order->status === 'COMPLETED') {
-            return $order;
-        }
-
-        return DB::transaction(function () use ($order, $gatewayRef) {
+        return DB::transaction(function () use ($order, $gatewayRef, $verified) {
             $order = Order::query()->lockForUpdate()->findOrFail($order->id);
             if ($order->status === 'COMPLETED') {
                 return $order;
+            }
+            if (! in_array($order->status, ['PENDING', 'RESERVED'], true)) {
+                throw ValidationException::withMessages(['payment' => 'Only a pending or reserved sale can be completed.']);
+            }
+            $requiresVerification = $order->paymentVerificationRequired
+                || ($order->channel === 'POS' && Tenant::query()->whereKey($order->tenantId)->value('requireVerifiedPayments'));
+            if ($order->channel === 'POS' && ! $verified && Tenant::query()->whereKey($order->tenantId)->value('cashlessOnly')
+                && Transaction::query()->where('orderId', $order->id)->where('method', 'CASH')->exists()) {
+                throw ValidationException::withMessages(['payment' => 'Cash payments are disabled. Restore this held sale to the register and select a cashless payment method.']);
+            }
+            if ($requiresVerification && ! $verified) {
+                throw ValidationException::withMessages(['payment' => 'This sale requires payment provider confirmation.']);
             }
 
             $items = OrderItem::query()->where('orderId', $order->id)->get();
@@ -220,7 +259,14 @@ class SaleRecorder
 
             foreach ($items as $item) {
                 $product = Product::query()->where('tenantId', $order->tenantId)->lockForUpdate()->findOrFail($item->productId);
-                $this->stock->take($product, (int) $item->quantity, $order->branchId, 'SALE', ['reference' => $order->id]);
+                if ($order->status === 'PENDING') {
+                    $available = $order->branchId ? $this->stock->quantityAt($product, $order->branchId) : (int) $product->currentStock;
+                    if ($available < (int) $item->quantity) {
+                        throw ValidationException::withMessages(['payment' => 'Insufficient stock at this branch. Review this payment before fulfilling the sale.']);
+                    }
+                    $this->stock->take($product, (int) $item->quantity, $order->branchId, 'SALE', ['reference' => $order->id]);
+                }
+                $product->forceFill(['reservedQty' => max(0, (int) $product->reservedQty - (int) $item->quantity)])->save();
                 $cogs += (float) $product->costPrice * (int) $item->quantity;
                 $prepared[] = [
                     'product' => $product,
@@ -233,6 +279,9 @@ class SaleRecorder
             }
 
             $order->forceFill(['status' => 'COMPLETED'])->save();
+            Hold::query()->where('orderId', $order->id)->where('status', 'ACTIVE')->update([
+                'status' => 'RESTORED', 'restoredAt' => now(),
+            ]);
             $transaction = Transaction::query()->where('orderId', $order->id)->first();
             if ($transaction) {
                 $transaction->forceFill([

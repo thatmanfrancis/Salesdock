@@ -29,6 +29,7 @@ use App\Models\User;
 use App\Models\VatSettings;
 use App\Services\FezDelivery;
 use App\Services\PaymentManager;
+use App\Services\PosPayments;
 use App\Services\StorePayouts;
 use App\Services\TaxReturns;
 use App\Support\Approval;
@@ -40,6 +41,7 @@ use App\Support\PlanFeatures;
 use App\Support\Totp;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -1168,7 +1170,7 @@ class OfficeController extends MerchantController
         if ($section === 'restock' && ! $managesSuppliers) {
             return redirect()->route('not-eligible');
         }
-        if (! in_array($section, ['business', 'vat', 'storefront', 'delivery', 'restock', 'subscription'], true)) {
+        if (! in_array($section, ['business', 'payments', 'vat', 'storefront', 'delivery', 'restock', 'subscription'], true)) {
             $section = 'business';
         }
         $days = null;
@@ -1193,14 +1195,14 @@ class OfficeController extends MerchantController
                 'unlinkedProducts' => Product::query()->where('tenantId', $tenant->id)->where('isActive', true)->whereNull('supplierId')->count(),
             ] : null,
             'storeUrl' => $tenant->slug ? route('store.show', $tenant->slug) : null,
-            'banks' => $section === 'storefront' ? app(PaymentManager::class)->active()->banks() : [],
+            'banks' => in_array($section, ['storefront', 'payments'], true) ? app(PaymentManager::class)->active()->banks() : [],
             'platformSplitPercent' => $section === 'storefront'
                 ? round((float) PlatformSetting::payment()['platform_split'] * 100, 1)
                 : null,
-            'payoutConnected' => $section === 'storefront' && $store
+            'payoutConnected' => in_array($section, ['storefront', 'payments'], true) && $store
                 ? (bool) $store->{app(PaymentManager::class)->active()->subaccountColumn()}
                 : false,
-            'gatewayLabel' => $section === 'storefront' ? app(PaymentManager::class)->active()->label() : null,
+            'gatewayLabel' => in_array($section, ['storefront', 'payments'], true) ? app(PaymentManager::class)->active()->label() : null,
             'deliveryAccount' => $section === 'delivery' ? DeliveryAccount::query()->firstOrNew(['tenantId' => $tenant->id]) : null,
             'deliveryStates' => $section === 'delivery' ? FezDelivery::states() : [],
             'deliveryConfig' => $section === 'delivery' ? PlatformSetting::delivery() : null,
@@ -1230,6 +1232,7 @@ class OfficeController extends MerchantController
         }
 
         return match ($section) {
+            'payments' => $this->savePayments($request),
             'vat' => $this->saveVat($request),
             'storefront' => $this->saveStorefront($request),
             'restock' => $this->saveRestock($request),
@@ -1245,6 +1248,36 @@ class OfficeController extends MerchantController
         return redirect()->route('settings', ['section' => 'restock'])->with('status', $on
             ? 'Restock drafts are on. Suppliers you have switched on will get draft orders when stock runs low.'
             : 'Restock drafts are off for the whole shop.');
+    }
+
+    private function savePayments(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'cashlessOnly' => ['nullable', 'boolean'],
+            'requireVerifiedPayments' => ['nullable', 'boolean'],
+            'bankCode' => ['nullable', 'required_with:bankAccount', 'string', 'max:20'],
+            'bankAccount' => ['nullable', 'required_with:bankCode', 'digits:10'],
+            'accountName' => ['nullable', 'string', 'max:255'],
+        ]);
+        $tenant = Tenant::query()->findOrFail($this->tenantId());
+        if (! empty($data['bankAccount'])) {
+            $store = StorefrontConfig::query()->firstOrNew(['tenantId' => $tenant->id]);
+            try {
+                app(StorePayouts::class)->sync($tenant, $store, $data);
+            } catch (\RuntimeException $exception) {
+                return back()->withInput()->withErrors(['bankAccount' => $exception->getMessage()]);
+            }
+        }
+        if ($request->boolean('requireVerifiedPayments')) {
+            app(PosPayments::class)->assertReady($tenant->id);
+        }
+        $tenant->forceFill([
+            'cashlessOnly' => $request->boolean('cashlessOnly'),
+            'requireVerifiedPayments' => $request->boolean('requireVerifiedPayments'),
+        ])->save();
+        $this->settingsAudit($request, 'payments');
+
+        return redirect()->route('settings', ['section' => 'payments'])->with('status', 'Payment settings saved.');
     }
 
     public function roles(Request $request)

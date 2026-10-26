@@ -29,12 +29,14 @@ use App\Models\Transaction;
 use App\Models\User;
 use App\Models\VatSettings;
 use App\Services\BranchInventory;
+use App\Services\PosPayments;
 use App\Services\SaleRecorder;
 use App\Services\SupplierMessenger;
 use App\Support\Approval;
 use App\Support\Permissions;
 use App\Support\ProductCsv;
 use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -118,12 +120,12 @@ class DeskController extends MerchantController
         $items = OrderItem::query()->whereIn('orderId', $holds->pluck('orderId'))->get()->groupBy('orderId');
         $vat = VatSettings::query()->where('tenantId', $tenantId)->first();
         $products = Product::query()->where('tenantId', $tenantId)->where('isActive', true)->orderBy('name')->get();
-        $branches = $stock->branches($tenantId);
         $branchId = $stock->resolveBranch($tenantId, $this->user()->branchId);
 
         return view('merchant.pos', [
+            'checkoutPolicy' => Tenant::query()->findOrFail($tenantId),
             'products' => $products,
-            'branchStock' => $branches->count() > 1 && $branchId ? $stock->quantitiesAt($tenantId, $branchId, $products->pluck('id')->all()) : null,
+            'branchStock' => $branchId ? $stock->availableQuantitiesAt($tenantId, $branchId, $products->pluck('id')->all()) : null,
             'holds' => $holds->map(fn ($hold) => [
                 'id' => $hold->id,
                 'reference' => $hold->reference ?: 'Unnamed hold',
@@ -139,13 +141,26 @@ class DeskController extends MerchantController
         ]);
     }
 
-    public function sell(Request $request, SaleRecorder $sales, BranchInventory $stock)
+    public function posStock(BranchInventory $stock): JsonResponse
+    {
+        $tenantId = $this->tenantId();
+        $branchId = $stock->resolveBranch($tenantId, $this->user()->branchId);
+        $products = Product::query()->where('tenantId', $tenantId)->where('isActive', true)->get(['id', 'currentStock', 'reservedQty']);
+        $quantities = $branchId ? $stock->availableQuantitiesAt($tenantId, $branchId, $products->pluck('id')->all()) : [];
+
+        return response()->json(['stock' => $products->mapWithKeys(fn (Product $product): array => [
+            $product->id => max(0, min($product->currentStock - $product->reservedQty, $quantities[$product->id] ?? $product->currentStock)),
+        ])])->header('Cache-Control', 'no-store');
+    }
+
+    public function sell(Request $request, SaleRecorder $sales, BranchInventory $stock, PosPayments $payments)
     {
         $data = $request->validate([
             'qty' => ['required', 'array'],
             'qty.*' => ['nullable', 'integer', 'min:0'],
             'discount' => ['nullable', 'numeric', 'min:0'],
             'method' => ['required', 'in:CASH,TRANSFER,CARD,POS_TERMINAL'],
+            'checkoutRequestId' => ['nullable', 'uuid'],
             'customerName' => ['nullable', 'string', 'max:255'],
             'customerPhone' => ['nullable', 'string', 'max:50'],
             'hold_label' => ['nullable', 'string', 'max:120'],
@@ -165,11 +180,15 @@ class DeskController extends MerchantController
         }
 
         $hold = $request->filled('hold_label');
+        if (! $hold && Tenant::query()->whereKey($this->tenantId())->value('requireVerifiedPayments')) {
+            $payments->assertReady($this->tenantId());
+        }
         $order = $sales->sell($this->tenantId(), $lines, [
             'branchId' => $stock->resolveBranch($this->tenantId(), $this->user()->branchId),
             'cashierId' => $this->user()->id,
             'channel' => 'POS',
             'method' => $data['method'],
+            'checkoutRequestId' => $data['checkoutRequestId'] ?? null,
             'discount' => $data['discount'] ?? 0,
             'customerName' => $data['customerName'] ?? null,
             'customerPhone' => $data['customerPhone'] ?? null,
@@ -181,7 +200,7 @@ class DeskController extends MerchantController
         session()->forget(['pos_cart', 'pos_hold']);
 
         if ($hold) {
-            Hold::query()->create([
+            Hold::query()->firstOrCreate(['orderId' => $order->id], [
                 'tenantId' => $this->tenantId(),
                 'orderId' => $order->id,
                 'cashierId' => $this->user()->id,
@@ -196,6 +215,13 @@ class DeskController extends MerchantController
         $ref = strtoupper(substr((string) ($order->paymentRef ?: $order->id), -8));
         $total = number_format((float) $order->netAmount, 2);
         $orderUrl = route('orders.show', $order);
+        if ($order->paymentVerificationRequired) {
+            $paymentUrl = route('pos.payments.show', $order);
+
+            return $request->expectsJson()
+                ? response()->json(['success' => false, 'pending' => true, 'paymentUrl' => $paymentUrl, 'orderId' => $order->id])
+                : redirect($paymentUrl)->with('status', 'Sale saved. Awaiting payment confirmation.');
+        }
 
         if ($request->expectsJson()) {
             return response()->json([
@@ -534,6 +560,13 @@ class DeskController extends MerchantController
     {
         abort_unless($this->managesProducts(), 403);
 
+        if (is_array($request->input('items'))) {
+            $request->merge(['items' => array_filter(
+                $request->input('items'),
+                fn (mixed $row): bool => ! is_array($row) || trim((string) ($row['id'] ?? '')) !== '',
+            )]);
+        }
+
         $data = $request->validate([
             'items' => ['required', 'array', 'min:1'],
             'items.*.id' => ['required', 'string'],
@@ -863,6 +896,7 @@ class DeskController extends MerchantController
         $shop = ! $this->cashierOnly();
         $choices = collect($this->orderTransitions($order->status))
             ->reject(fn ($status) => $status === 'CANCELLED')
+            ->reject(fn ($status) => $this->requiresPaymentVerification($order) && in_array($status, ['RESERVED', 'COMPLETED'], true))
             ->mapWithKeys(fn ($status) => [$status => ucfirst(strtolower($status))])
             ->all();
 
@@ -872,6 +906,7 @@ class DeskController extends MerchantController
             'names' => $names,
             'transactions' => Transaction::query()->where('orderId', $order->id)->latest('createdAt')->get(),
             'cashier' => $order->cashierId ? User::query()->whereKey($order->cashierId)->value('name') : null,
+            'branchName' => $order->branchId ? Branch::query()->whereKey($order->branchId)->value('name') : null,
             'ref' => strtoupper(substr((string) ($order->paymentRef ?: $order->id), -8)),
             'shop' => $shop,
             'open' => $shop && ! in_array($order->status, ['COMPLETED', 'CANCELLED', 'RETURNED'], true),
@@ -901,13 +936,21 @@ class DeskController extends MerchantController
             'status' => ['required', 'in:RESERVED,COMPLETED,CANCELLED,RETURNED'],
             'reason' => ['nullable', 'string', 'max:500'],
         ]);
+        if ($this->requiresPaymentVerification($order) && in_array($data['status'], ['RESERVED', 'COMPLETED'], true)) {
+            throw ValidationException::withMessages(['payment' => 'This sale requires payment provider confirmation.']);
+        }
+        if ($order->channel === 'POS' && in_array($data['status'], ['RESERVED', 'COMPLETED'], true)
+            && Tenant::query()->whereKey($order->tenantId)->value('cashlessOnly')
+            && Transaction::query()->where('orderId', $order->id)->where('method', 'CASH')->exists()) {
+            throw ValidationException::withMessages(['payment' => 'Cash payments are disabled. Restore this held sale to the register and select a cashless payment method.']);
+        }
         if (! in_array($data['status'], $this->orderTransitions($order->status), true)) {
             throw ValidationException::withMessages([
                 'status' => 'That status change is not allowed from '.$order->status.'.',
             ]);
         }
 
-        if ($order->status === 'PENDING' && $data['status'] === 'COMPLETED') {
+        if (in_array($order->status, ['PENDING', 'RESERVED'], true) && $data['status'] === 'COMPLETED') {
             $this->finishPending($order, $sales, 'ORDER-'.$order->id);
 
             return back()->with('status', 'Order completed.');
@@ -915,6 +958,10 @@ class DeskController extends MerchantController
 
         $reason = trim((string) ($data['reason'] ?? ''));
         DB::transaction(function () use ($request, $order, $data, $reason) {
+            $order = Order::query()->lockForUpdate()->findOrFail($order->id);
+            if (! in_array($data['status'], $this->orderTransitions($order->status), true)) {
+                throw ValidationException::withMessages(['status' => 'This order has changed. Refresh before updating it.']);
+            }
             $this->applyOrderStock($order, $data['status']);
             $order->forceFill([
                 'status' => $data['status'],
@@ -2213,21 +2260,12 @@ class DeskController extends MerchantController
     private function finishPending(Order $order, SaleRecorder $sales, string $gatewayRef): void
     {
         $sales->completePending($order, $gatewayRef);
-        DB::transaction(function () use ($order) {
-            foreach (OrderItem::query()->where('orderId', $order->id)->get() as $item) {
-                $product = Product::query()->where('tenantId', $order->tenantId)->lockForUpdate()->find($item->productId);
-                if (! $product) {
-                    continue;
-                }
-                $product->forceFill([
-                    'reservedQty' => max(0, (int) $product->reservedQty - (int) $item->quantity),
-                ])->save();
-            }
-            Hold::query()->where('orderId', $order->id)->where('status', 'ACTIVE')->update([
-                'status' => 'RESTORED',
-                'restoredAt' => now(),
-            ]);
-        });
+    }
+
+    private function requiresPaymentVerification(Order $order): bool
+    {
+        return $order->paymentVerificationRequired || ($order->channel === 'POS'
+            && (bool) Tenant::query()->whereKey($order->tenantId)->value('requireVerifiedPayments'));
     }
 
     private function applyOrderStock(Order $order, string $next): void

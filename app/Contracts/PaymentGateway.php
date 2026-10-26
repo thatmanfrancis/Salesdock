@@ -41,7 +41,7 @@ interface PaymentGateway
     public function updateSubaccount(string $subaccountId, array $shop): void;
 
     /**
-     * @param  array{reference: string, amount: float, email: string, name?: ?string, phone?: ?string, redirect: string, title: string, description: string, subaccountId?: ?string}  $payment
+     * @param  array{reference: string, amount: float, email: string, name?: ?string, phone?: ?string, redirect: string, title: string, description: string, subaccountId?: ?string, attemptReference?: string}  $payment
      */
     public function checkoutLink(array $payment): string;
 

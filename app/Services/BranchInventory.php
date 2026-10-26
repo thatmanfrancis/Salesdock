@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Branch;
 use App\Models\BranchStock;
+use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\StockMovement;
 use Illuminate\Support\Collection;
@@ -104,6 +105,25 @@ class BranchInventory
         }
 
         return $out;
+    }
+
+    /**
+     * @param  array<int, string>  $productIds
+     * @return array<string, int>
+     */
+    public function availableQuantitiesAt(string $tenantId, string $branchId, array $productIds): array
+    {
+        $quantities = $this->quantitiesAt($tenantId, $branchId, $productIds);
+        $reserved = OrderItem::query()->join('orders', 'orders.id', '=', 'order_items.orderId')
+            ->where('orders.tenantId', $tenantId)->where('orders.branchId', $branchId)
+            ->where('orders.status', 'PENDING')->whereIn('order_items.productId', $productIds)
+            ->groupBy('order_items.productId')->selectRaw('"order_items"."productId", SUM("order_items"."quantity") AS reserved')
+            ->pluck('reserved', 'productId');
+        foreach ($quantities as $productId => $quantity) {
+            $quantities[$productId] = max(0, $quantity - (int) ($reserved[$productId] ?? 0));
+        }
+
+        return $quantities;
     }
 
     /**

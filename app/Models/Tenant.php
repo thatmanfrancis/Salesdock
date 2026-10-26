@@ -77,6 +77,8 @@ class Tenant extends Model
         return [
             'taxRate' => 'decimal:2',
             'isActive' => 'boolean',
+            'cashlessOnly' => 'boolean',
+            'requireVerifiedPayments' => 'boolean',
             'restockDrafts' => 'boolean',
             'approvedAt' => 'datetime',
             'profileCompletedAt' => 'datetime',

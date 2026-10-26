@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\CatalogueImport;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Tests\TestCase;
 
 class CatalogueImportTest extends TestCase
@@ -175,5 +176,101 @@ class CatalogueImportTest extends TestCase
         $role = Role::query()->create(['tenantId' => $tenant->id, 'name' => 'Owner', 'role' => 'ADMIN', 'permissions' => []]);
 
         return User::query()->create(['tenantId' => $tenant->id, 'roleId' => $role->id, 'name' => 'Owner', 'email' => $slug.'@example.test']);
+    }
+
+    public function test_partial_selection_ignores_unchecked_rows_even_when_they_include_numbers(): void
+    {
+        $owner = $this->shopOwner('partial');
+        $first = CatalogueProduct::query()->create(['name' => 'Milk', 'category' => 'Beverages', 'createdBy' => 'admin']);
+        $second = CatalogueProduct::query()->create(['name' => 'Tea', 'category' => 'Beverages', 'createdBy' => 'admin']);
+
+        $this->withoutMiddleware(ShareWorkspace::class)->actingAs($owner)
+            ->post(route('products.starter.import'), ['items' => [
+                1 => ['id' => $first->id, 'price' => 1500],
+                2 => ['price' => '', 'stock' => ''],
+                5 => ['id' => $second->id, 'price' => 2500],
+                6 => ['price' => 123, 'stock' => 0],
+            ]])->assertRedirect(route('products'))->assertSessionHasNoErrors();
+
+        $this->assertDatabaseCount('products', 2);
+        $this->assertDatabaseHas('products', ['tenantId' => $owner->tenantId, 'name' => 'Milk', 'price' => 1500]);
+        $this->assertDatabaseHas('products', ['tenantId' => $owner->tenantId, 'name' => 'Tea', 'price' => 2500]);
+    }
+
+    public function test_selected_product_still_requires_a_valid_price(): void
+    {
+        $owner = $this->shopOwner('invalid-price');
+        $item = CatalogueProduct::query()->create(['name' => 'Milk', 'category' => 'Beverages', 'createdBy' => 'admin']);
+
+        $this->withoutMiddleware(ShareWorkspace::class)->actingAs($owner)
+            ->post(route('products.starter.import'), ['items' => [5 => ['id' => $item->id, 'price' => '']]])
+            ->assertSessionHasErrors('items.5.price');
+
+        $this->assertDatabaseCount('products', 0);
+    }
+
+    public function test_admin_can_open_a_category_and_see_editable_products(): void
+    {
+        $admin = new User(['id' => 'admin', 'isSuperAdmin' => true, 'name' => 'Admin']);
+        $admin->setRelation('role', null);
+        $admin->setRelation('tenant', null);
+        $item = CatalogueProduct::query()->create(['name' => 'Milk', 'sku' => 'SD-001', 'category' => 'Beverages', 'createdBy' => 'admin']);
+        CatalogueProduct::query()->create(['name' => 'Bread', 'category' => 'Food', 'createdBy' => 'admin']);
+
+        $this->actingAs($admin)->get(route('admin.catalogue', ['category' => 'Beverages']))
+            ->assertOk()
+            ->assertViewHas('items', fn ($items): bool => $items->pluck('id')->all() === [$item->id])
+            ->assertSee('SD-001')
+            ->assertSee('data-sku="SD-001"', false)
+            ->assertSee('name="sku"', false);
+    }
+
+    public function test_admin_sku_conflict_is_rejected_without_changing_product_details(): void
+    {
+        $admin = new User(['id' => 'admin', 'isSuperAdmin' => true]);
+        $admin->setRelation('role', null);
+        $admin->setRelation('tenant', null);
+        $item = CatalogueProduct::query()->create(['name' => 'Milk', 'sku' => 'SD-001', 'category' => 'Beverages', 'createdBy' => 'admin']);
+        CatalogueProduct::query()->create(['name' => 'Tea', 'sku' => 'SD-002', 'category' => 'Beverages', 'createdBy' => 'admin']);
+
+        $this->actingAs($admin)->put(route('admin.catalogue.update', $item), [
+            'name' => 'Changed milk', 'category' => 'Beverages', 'sku' => 'SD-002',
+        ])->assertSessionHasErrors('sku');
+
+        $this->assertSame('Milk', $item->fresh()->name);
+        $this->assertSame('SD-001', $item->fresh()->sku);
+    }
+
+    public function test_admin_can_edit_catalogue_details_without_changing_existing_shop_products(): void
+    {
+        $owner = $this->shopOwner('existing-shop');
+        $product = Product::query()->create(['tenantId' => $owner->tenantId, 'name' => 'Milk', 'sku' => 'SD-001', 'price' => 1500]);
+        $item = CatalogueProduct::query()->create(['name' => 'Milk', 'sku' => 'SD-001', 'category' => 'Beverages', 'createdBy' => 'admin']);
+        $admin = new User(['id' => 'admin', 'isSuperAdmin' => true]);
+        $admin->setRelation('role', null);
+        $admin->setRelation('tenant', null);
+        $originalStorage = $this->app->storagePath();
+        $testStorage = $originalStorage.'/framework/testing/catalogue-edit';
+        File::ensureDirectoryExists($testStorage.'/app');
+        $this->app->useStoragePath($testStorage);
+
+        try {
+            $this->actingAs($admin)->put(route('admin.catalogue.update', $item), [
+                'name' => 'Whole milk', 'sku' => 'SD-001', 'category' => 'Beverages',
+                'brand' => 'Example', 'unit' => 'tin', 'barcode' => '001234',
+                'description' => 'Updated description', 'isActive' => 1,
+            ])->assertSessionHasNoErrors();
+        } finally {
+            $this->app->useStoragePath($originalStorage);
+            File::deleteDirectory($testStorage);
+        }
+
+        $this->assertDatabaseHas('catalogue_products', [
+            'id' => $item->id, 'name' => 'Whole milk', 'sku' => 'SD-001', 'brand' => 'Example',
+            'unit' => 'tin', 'barcode' => '001234', 'description' => 'Updated description',
+        ]);
+        $this->assertSame('Milk', $product->fresh()->name);
+        $this->assertSame('SD-001', $product->fresh()->sku);
+        $this->assertEquals(1500, $product->fresh()->price);
     }
 }

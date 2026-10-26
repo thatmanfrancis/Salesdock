@@ -38,6 +38,7 @@
         </div>
         <p class="muted">Shops search this list and add a product with their own price and stock.</p>
 
+        @if ($category === '')
         <section class="card orders">
             <table>
                 <thead>
@@ -56,6 +57,7 @@
                             <td>{{ number_format($row['stores']) }}</td>
                             <td>
                                 <div class="row-actions">
+                                    <a href="{{ route('admin.catalogue', ['category' => $row['name']]) }}#catalogue-products">View products</a>
                                     <button type="button" class="detail" data-category-detail='@json($row)'>Details</button>
                                     <button type="button" class="detail" data-rename data-name="{{ $row['name'] }}">Rename</button>
                                     @if ($row['stores'] === 0)
@@ -73,11 +75,16 @@
             </table>
         </section>
 
-        <section class="card orders">
+        @else
+            <p><a href="{{ route('admin.catalogue') }}">← All categories</a> · {{ $category }}</p>
+        @endif
+
+        <section class="card orders" id="catalogue-products">
             <table>
                 <thead>
                     <tr>
                         <th>Name</th>
+                        <th>SKU</th>
                         <th>Brand</th>
                         <th>Unit</th>
                         <th>Barcode</th>
@@ -91,7 +98,7 @@
                         @if ($group !== $label)
                             @php $group = $label; @endphp
                             <tr class="group">
-                                <td colspan="5">{{ $label }}</td>
+                                <td colspan="6">{{ $label }}</td>
                             </tr>
                         @endif
                         <tr>
@@ -101,19 +108,20 @@
                                     <span class="badge draft">Hidden</span>
                                 @endunless
                             </td>
+                            <td>{{ $item->sku ?? '—' }}</td>
                             <td>{{ $item->brand ?: '—' }}</td>
                             <td>{{ $item->unit ?: '—' }}</td>
                             <td>{{ $item->barcode ?: '—' }}</td>
                             <td>
                                 <div class="row-actions">
-                                    <button type="button" class="detail" data-edit data-url="{{ route('admin.catalogue.update', $item) }}" data-name="{{ $item->name }}" data-brand="{{ $item->brand }}" data-category="{{ $item->category }}" data-unit="{{ $item->unit }}" data-barcode="{{ $item->barcode }}" data-description="{{ $item->description }}" data-active="{{ $item->isActive ? '1' : '0' }}">Edit</button>
+                                    <button type="button" class="detail" data-edit data-url="{{ route('admin.catalogue.update', $item) }}" data-name="{{ $item->name }}" data-sku="{{ $item->sku }}" data-brand="{{ $item->brand }}" data-category="{{ $item->category }}" data-unit="{{ $item->unit }}" data-barcode="{{ $item->barcode }}" data-description="{{ $item->description }}" data-active="{{ $item->isActive ? '1' : '0' }}">Edit</button>
                                     <button type="button" class="quiet" data-ask data-url="{{ route('admin.catalogue.destroy', $item) }}" data-title="Delete item" data-copy="Delete {{ $item->name }} from the catalogue?" data-label="Delete" data-loading="Deleting…" data-tone="danger">Delete</button>
                                 </div>
                             </td>
                         </tr>
                     @empty
                         <tr>
-                            <td class="empty" colspan="5">No catalogue items.</td>
+                            <td class="empty" colspan="6">No catalogue items.</td>
                         </tr>
                     @endforelse
                 </tbody>
@@ -169,6 +177,10 @@
                                 <option value="{{ $pickedCategory }}" selected>{{ $pickedCategory }}</option>
                             @endif
                         </select>
+                    </div>
+                    <div class="ui-field">
+                        <span>SKU</span>
+                        <input type="text" name="sku" value="{{ old('sku') }}" maxlength="120">
                     </div>
                     <div class="ui-field">
                         <span>Brand</span>
@@ -353,7 +365,7 @@
         const itemMethod = itemForm.querySelector('[data-item-method]');
         const itemTitle = itemModal.querySelector('[data-item-title]');
         const fill = (values) => {
-            ['name', 'brand', 'category', 'unit', 'barcode', 'description', 'item'].forEach((name) => {
+            ['name', 'sku', 'brand', 'category', 'unit', 'barcode', 'description', 'item'].forEach((name) => {
                 const field = itemForm.querySelector('[name="' + name + '"]');
                 if (field) field.value = values[name] || '';
             });
@@ -380,6 +392,7 @@
                 fill({
                     item: button.dataset.url.split('/').pop(),
                     name: button.dataset.name,
+                    sku: button.dataset.sku,
                     brand: button.dataset.brand,
                     category: button.dataset.category,
                     unit: button.dataset.unit,

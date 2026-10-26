@@ -153,7 +153,7 @@ class Flutterwave implements PaymentGateway
     public function checkoutLink(array $payment): string
     {
         $payload = [
-            'tx_ref' => $this->attemptReference($payment['reference']),
+            'tx_ref' => $payment['attemptReference'] ?? $this->attemptReference($payment['reference']),
             'amount' => round($payment['amount'], 2),
             'currency' => 'NGN',
             'redirect_url' => $payment['redirect'],
@@ -242,6 +242,11 @@ class Flutterwave implements PaymentGateway
             'status' => (string) ($data['status'] ?? ''),
             'created_at' => isset($data['created_at']) ? (string) $data['created_at'] : null,
             'gateway' => 'FLUTTERWAVE',
+            'method' => match ($data['payment_type'] ?? null) {
+                'card' => 'CARD',
+                'banktransfer', 'bank_transfer', 'account' => 'TRANSFER',
+                default => null,
+            },
         ];
     }
 

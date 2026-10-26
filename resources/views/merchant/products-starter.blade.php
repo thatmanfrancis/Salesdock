@@ -132,6 +132,13 @@
         const limit   = {{ $remaining }};
 
         function syncCount() {
+            form?.querySelectorAll('.starter-row').forEach((row) => {
+                const checkbox = row.querySelector('input[type="checkbox"]');
+                row.querySelectorAll('input[type="number"]').forEach((input) => {
+                    input.disabled = !checkbox.checked;
+                    if (input.name.endsWith('[price]')) input.required = checkbox.checked;
+                });
+            });
             const checked = form ? form.querySelectorAll('input[type="checkbox"]:checked').length : 0;
             if (countEl) countEl.textContent = checked + ' selected · ready to import';
             if (submit) submit.disabled = checked === 0;

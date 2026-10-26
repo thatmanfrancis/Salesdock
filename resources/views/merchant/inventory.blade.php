@@ -43,7 +43,7 @@
                         <th></th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody data-live-region="inventory">
                     @forelse ($products as $product)
                         @php
                             $level = $branchQty !== null ? (int) ($branchQty[$product->id] ?? 0) : (int) $product->currentStock;
@@ -70,7 +70,7 @@
                     @endforelse
                 </tbody>
             </table>
-            <nav class="pager" aria-label="Pages">
+            <nav class="pager" aria-label="Pages" data-live-region="inventory-pager">
                 @if ($page > 1)
                     <a href="{{ request()->fullUrlWithQuery(['page' => $page - 1]) }}">Previous</a>
                 @else
@@ -118,14 +118,14 @@
         const modal = document.querySelector('[data-adjust-modal]');
         const form = modal.querySelector('form');
         const close = () => { if (!modal.querySelector('button.is-busy')) modal.hidden = true; };
-        document.querySelectorAll('[data-adjust]').forEach((button) => {
-            button.addEventListener('click', () => {
-                form.querySelector('[data-product]').value = button.dataset.id;
-                modal.querySelector('[data-adjust-title]').textContent = 'Adjust ' + button.dataset.name;
-                form.querySelector('[name="quantity"]').value = '';
-                form.querySelector('[name="notes"]').value = '';
-                modal.hidden = false;
-            });
+        document.addEventListener('click', (event) => {
+            const button = event.target.closest('[data-adjust]');
+            if (!button) return;
+            form.querySelector('[data-product]').value = button.dataset.id;
+            modal.querySelector('[data-adjust-title]').textContent = 'Adjust ' + button.dataset.name;
+            form.querySelector('[name="quantity"]').value = '';
+            form.querySelector('[name="notes"]').value = '';
+            modal.hidden = false;
         });
         modal.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', close));
         form.addEventListener('submit', () => {
@@ -141,4 +141,5 @@
             if (event.key === 'Escape') close();
         });
     </script>
+    @include('partials.live-data')
 @endsection

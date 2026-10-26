@@ -23,6 +23,7 @@
             />
         </div>
 
+        <div data-live-region="dashboard">
         @if ($stats !== [])
             <div class="stats">
                 @foreach ($stats as $stat)
@@ -105,5 +106,7 @@
                 </section>
             @endif
         </div>
+        </div>
     </div>
+    @include('partials.live-data')
 @endsection

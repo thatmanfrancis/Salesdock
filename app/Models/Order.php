@@ -39,6 +39,7 @@ class Order extends Model
             'deliveryFee' => 'decimal:2',
             'cancelledAt' => 'datetime',
             'cancelRequested' => 'boolean',
+            'paymentVerificationRequired' => 'boolean',
             'returnedAt' => 'datetime',
             'createdAt' => 'datetime',
             'updatedAt' => 'datetime',

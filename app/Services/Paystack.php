@@ -151,7 +151,7 @@ class Paystack implements PaymentGateway
             'email' => $payment['email'],
             'amount' => (int) round($payment['amount'] * 100),
             'currency' => 'NGN',
-            'reference' => $this->attemptReference($payment['reference']),
+            'reference' => $payment['attemptReference'] ?? $this->attemptReference($payment['reference']),
             'callback_url' => $payment['redirect'],
             'metadata' => [
                 'reference' => $payment['reference'],
@@ -240,6 +240,11 @@ class Paystack implements PaymentGateway
             'status' => (string) ($data['status'] ?? ''),
             'created_at' => isset($data['paid_at']) ? (string) $data['paid_at'] : (isset($data['created_at']) ? (string) $data['created_at'] : null),
             'gateway' => 'PAYSTACK',
+            'method' => match ($data['channel'] ?? null) {
+                'card' => 'CARD',
+                'bank_transfer', 'bank', 'dedicated_nuban' => 'TRANSFER',
+                default => null,
+            },
         ];
     }
 

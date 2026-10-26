@@ -15,6 +15,9 @@
         </div>
 
         <div class="order-grid">
+            @if ($order->paymentVerificationRequired)
+                <p class="note"><a href="{{ route('pos.payments.show', $order) }}">View payment confirmation</a></p>
+            @endif
             <div class="order-main">
                 <section class="card orders">
                     <p class="kicker band">Items</p>
@@ -61,6 +64,8 @@
                                 <span>{{ ucfirst(strtolower(str_replace('_', ' ', $txn->method))) }} via {{ ucfirst(strtolower(str_replace('_', ' ', $txn->gateway))) }}</span>
                                 <strong>{{ $money($txn->amount) }}</strong>
                                 <span class="badge {{ strtolower($txn->status) }}">{{ $txn->status }}</span>
+                                @if ($txn->gatewayRef)<span>Provider ref: {{ $txn->gatewayRef }}</span>@endif
+                                @if ($txn->metadata['needsReview'] ?? false)<span class="note ended">{{ $txn->metadata['reviewReason'] }}</span>@endif
                             </div>
                         @endforeach
                     </section>
@@ -174,6 +179,7 @@
                 <section class="card">
                     <p class="kicker">Order info</p>
                     <div class="info-row"><span>Channel</span><strong>{{ $order->channel }}</strong></div>
+                    <div class="info-row"><span>Branch</span><strong>{{ $branchName ?: '—' }}</strong></div>
                     <div class="info-row"><span>Date</span><strong>{{ $order->createdAt?->format('d M Y, H:i') }}</strong></div>
                     <div class="info-row"><span>Cashier</span><strong>{{ $cashier ?: '—' }}</strong></div>
                     <div class="info-row"><span>Payment ref</span><strong>{{ $order->paymentRef ?: '—' }}</strong></div>

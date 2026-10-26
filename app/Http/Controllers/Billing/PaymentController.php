@@ -131,13 +131,18 @@ class PaymentController extends Controller
         }
 
         $payload = $request->json()->all();
+        $eventType = (string) ($payload['event'] ?? $payload['event.type'] ?? '');
+        $supportedEvents = $gateway->name() === 'paystack' ? ['charge.success'] : ['charge.completed'];
+        if (! in_array($eventType, $supportedEvents, true)) {
+            return response('ignored');
+        }
         [$transactionId, $reference] = $this->webhookIds($gateway, $payload);
         if ($transactionId === '' && $reference === '') {
             return response('missing reference', 422);
         }
 
         $event = WebhookEvent::query()->firstOrCreate(
-            ['reference' => $transactionId !== '' ? $transactionId : $reference],
+            ['reference' => $gateway->name().':'.$eventType.':'.($transactionId !== '' ? $transactionId : $reference)],
             [
                 'gateway' => $gateway->name(),
                 'eventType' => (string) ($payload['event'] ?? $payload['event.type'] ?? 'charge.completed'),
@@ -155,9 +160,14 @@ class PaymentController extends Controller
                 ? $gateway->verifyTransaction($transactionId)
                 : $gateway->verifyByReference($reference);
             if ($gateway->successful($payment['status'] ?? null)) {
-                $billing->settlePayment($payment, $gateway, $sales);
+                $result = $billing->settlePayment($payment, $gateway, $sales);
+                if ($result === null) {
+                    $event->forceFill(['error' => 'No matching payable invoice or order.'])->save();
+
+                    return response('unmatched', 422);
+                }
             }
-            $event->forceFill(['processed' => true, 'processedAt' => now()])->save();
+            $event->forceFill(['processed' => true, 'processedAt' => now(), 'error' => null])->save();
         } catch (\Throwable $e) {
             $event->forceFill(['error' => $e->getMessage()])->save();
 

@@ -15,3 +15,4 @@ Schedule::command('subscriptions:end-trials')->dailyAt('08:00')->timezone('Afric
 Schedule::command('tenants:purge')->dailyAt('02:00')->timezone('Africa/Lagos');
 Schedule::command('registrations:prune')->dailyAt('02:30')->timezone('Africa/Lagos');
 Schedule::command('deliveries:sync-fez')->everyFifteenMinutes()->timezone('Africa/Lagos');
+Schedule::command('payments:reconcile-pos')->everyFiveMinutes()->withoutOverlapping(15);

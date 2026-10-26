@@ -1,6 +1,6 @@
 // SalesDock Service Worker — POS Offline Mode
 // Version bump this string whenever CSS/JS changes to force cache refresh
-const CACHE    = 'salesdock-v1';
+const CACHE    = 'salesdock-v2';
 const DB_NAME  = 'salesdock-offline';
 const DB_VER   = 1;
 const STORE    = 'pending-sales';
@@ -89,6 +89,11 @@ async function handleOfflineSale(request) {
   } catch {
     // We're offline — save the sale to IndexedDB
     const formData = await request.formData();
+    if (formData.get('verification_required') === '1') {
+      return new Response(JSON.stringify({message: 'Verified payments require an internet connection. This sale has not been completed.'}), {
+        status: 503, headers: {'Content-Type': 'application/json'},
+      });
+    }
     const sale = {};
     for (const [key, value] of formData.entries()) {
       if (sale[key] !== undefined) {

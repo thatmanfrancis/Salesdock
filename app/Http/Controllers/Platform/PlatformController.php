@@ -1803,6 +1803,7 @@ class PlatformController extends MerchantController
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
+            'sku' => ['nullable', 'string', 'max:120', Rule::unique('catalogue_products', 'sku')->ignore($request->route('item'))],
             'brand' => ['nullable', 'string', 'max:120'],
             'category' => ['required', 'string', 'max:120'],
             'unit' => ['nullable', 'string', 'max:80'],
@@ -1816,6 +1817,7 @@ class PlatformController extends MerchantController
 
         return [
             'name' => trim($data['name']),
+            'sku' => $clean($data['sku'] ?? ''),
             'brand' => $clean($data['brand'] ?? ''),
             'category' => $category,
             'unit' => $clean($data['unit'] ?? ''),

@@ -21,6 +21,7 @@
     if ($managesSuppliers ?? false) {
         $sections = array_slice($sections, 0, -1, true) + ['restock' => 'Restock'] + ['subscription' => 'Subscription'];
     }
+    $sections = array_slice($sections, 0, 1, true) + ['payments' => 'Payments'] + array_slice($sections, 1, null, true);
     $rate = old('globalVatRate', $vat->globalVatRate ?? $tenant->taxRate ?? '7.5');
     $inclusive = old('section') === 'vat' ? (bool) old('isInclusive') : (bool) $vat->isInclusive;
     $public = old('section') === 'storefront' ? (bool) old('isPublic') : ($store->exists ? (bool) $store->isPublic : true);
@@ -103,6 +104,27 @@
                                     </div>
                                 </div>
                             </div>
+                        </form>
+                    </section>
+                @elseif ($section === 'payments')
+                    <section class="card profile-narrow">
+                        <form method="post" action="{{ route('settings.update') }}" data-busy>
+                            @csrf
+                            <input type="hidden" name="section" value="payments">
+                            <p class="kicker">In-store payments</p>
+                            <label class="switch"><span>Cashless payments only</span><input type="checkbox" name="cashlessOnly" value="1" @checked(old('section') === 'payments' ? old('cashlessOnly') : $tenant->cashlessOnly)></label>
+                            <label class="switch"><span>Require payment provider confirmation</span><input type="checkbox" name="requireVerifiedPayments" value="1" @checked(old('section') === 'payments' ? old('requireVerifiedPayments') : $tenant->requireVerifiedPayments)></label>
+                            <p class="hint">Verified checkout accepts online card and bank-transfer payments. Cash and unconnected physical terminals cannot complete these sales. Pending verified sales still require confirmation if you later turn this setting off.</p>
+                            <p class="hint">All branches use this collection account. Sales retain their branch, cashier and payment references for reconciliation.</p>
+                            @if ($payoutConnected)
+                                <p class="note">{{ $gatewayLabel }} collection account connected: {{ $store->bankName }} · {{ substr((string) $store->bankAccount, -4) }}</p>
+                            @else
+                                <p class="hint">Connect your collection account before enabling provider confirmation.</p>
+                            @endif
+                            <label><span>Collection bank (leave blank to keep current account)</span><select name="bankCode"><option value="">Keep current account</option>@foreach ($banks as $code => $name)<option value="{{ $code }}" @selected(old('bankCode') === (string) $code)>{{ $name }}</option>@endforeach</select></label>
+                            <label><span>Account number</span><input name="bankAccount" inputmode="numeric" maxlength="10" value="{{ old('bankAccount') }}" autocomplete="off"></label>
+                            <label><span>Account name</span><input name="accountName" value="{{ old('accountName') }}"></label>
+                            <div class="ui-modal-actions"><button type="submit" data-loading="Saving…"><span data-label>Save payment settings</span></button></div>
                         </form>
                     </section>
                 @elseif ($section === 'vat')

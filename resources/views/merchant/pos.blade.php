@@ -50,6 +50,7 @@
                         data-id="{{ $product->id }}"
                         data-name="{{ $product->name }}"
                         data-sku="{{ $product->sku }}"
+                        data-barcode="{{ $product->barcode }}"
                         data-price="{{ $product->price }}"
                         data-stock="{{ $available }}"
                         data-category="{{ $product->category }}"
@@ -87,7 +88,9 @@
 
             <form class="pos-pane" method="post" action="{{ route('pos.store') }}" id="pos-sale" data-pane="cart">
                 @csrf
-                <input type="hidden" name="method" value="CASH" id="pos-method">
+                <input type="hidden" name="method" value="{{ $checkoutPolicy->cashlessOnly || $checkoutPolicy->requireVerifiedPayments ? 'CARD' : 'CASH' }}" id="pos-method">
+                <input type="hidden" name="verification_required" value="{{ $checkoutPolicy->requireVerifiedPayments ? '1' : '0' }}">
+                <input type="hidden" name="checkoutRequestId" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
                 <input type="hidden" name="discount" value="0">
                 <input type="hidden" name="hold_label" value="" id="pos-hold">
                 <input type="hidden" name="resume_hold" value="{{ $resumeHold }}">
@@ -101,8 +104,10 @@
                     <p class="due"><span>Total Amount</span><strong id="pos-due">₦0.00</strong></p>
                 </div>
                 <div class="pos-pay">
-                    <button type="button" class="on" data-method="CASH">Cash</button>
-                    <button type="button" data-method="CARD">Card</button>
+                    @unless ($checkoutPolicy->cashlessOnly || $checkoutPolicy->requireVerifiedPayments)
+                        <button type="button" class="on" data-method="CASH">Cash</button>
+                    @endunless
+                    <button type="button" @class(['on' => $checkoutPolicy->cashlessOnly || $checkoutPolicy->requireVerifiedPayments]) data-method="CARD">Card</button>
                     <button type="button" data-method="TRANSFER">Transfer</button>
                 </div>
                 <div class="pos-actions">
@@ -119,7 +124,7 @@
                             </label>
                         </div>
                     </div>
-                    <button type="button" id="pos-place" disabled>Complete Sale</button>
+                    <button type="button" id="pos-place" disabled>{{ $checkoutPolicy->requireVerifiedPayments ? 'Continue to payment' : 'Complete Sale' }}</button>
                 </div>
             </form>
 
@@ -315,7 +320,7 @@
             const term = query.value.trim().toLowerCase();
             let shown = 0;
             grid.querySelectorAll('.pos-product').forEach((btn) => {
-                const hay = (btn.dataset.name + ' ' + btn.dataset.sku).toLowerCase();
+                const hay = (btn.dataset.name + ' ' + btn.dataset.sku + ' ' + btn.dataset.barcode).toLowerCase();
                 const ok = (!term || hay.includes(term)) && (!category || btn.dataset.category === category);
                 btn.hidden = !ok;
                 if (ok) shown += 1;
@@ -331,6 +336,18 @@
         }
 
         query?.addEventListener('input', filterProducts);
+        query?.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            const code = query.value.trim().toLowerCase();
+            if (!code) return;
+            const product = Array.from(grid.querySelectorAll('.pos-product')).find((item) =>
+                item.dataset.barcode?.toLowerCase() === code || item.dataset.sku.toLowerCase() === code);
+            if (!product || product.disabled) return;
+            change(product.dataset.id, 1);
+            query.value = '';
+            filterProducts();
+        });
         document.getElementById('pos-filter')?.addEventListener('click', () => {
             const cats = document.getElementById('pos-cats');
             if (!cats) return;
@@ -379,6 +396,7 @@
 
         // ── Checkout flow ────────────────────────────────────────────────────
         const form = document.getElementById('pos-sale');
+        const checkoutLabel = document.getElementById('pos-place').textContent;
         const cashModal = document.getElementById('pos-cash-modal');
         const successModal = document.getElementById('pos-success-modal');
         const shortcutsModal = document.getElementById('pos-shortcuts-modal');
@@ -390,6 +408,10 @@
         }
 
         async function submitSale() {
+            if (form.elements.verification_required.value === '1' && !navigator.onLine) {
+                alert('Verified payments require an internet connection. This sale has not been completed.');
+                return;
+            }
             const btn = document.getElementById('pos-place');
             btn.disabled = true;
             btn.textContent = 'Processing…';
@@ -404,11 +426,17 @@
                     const err = await res.json().catch(() => ({}));
                     alert(err.message || 'Something went wrong. Please try again.');
                     btn.disabled = false;
-                    btn.textContent = 'Complete Sale';
+                    btn.textContent = checkoutLabel;
                     return;
                 }
                 const data = await res.json();
+                if (data.pending && data.paymentUrl) {
+                    location.assign(data.paymentUrl);
+                    return;
+                }
                 cart.clear();
+                btn.textContent = checkoutLabel;
+                form.elements.checkoutRequestId.value = crypto.randomUUID();
                 paint();
                 if (data.offline) {
                     // Queued offline — show a different success state
@@ -429,7 +457,7 @@
             } catch (e) {
                 alert('Network error. Please try again.');
                 btn.disabled = false;
-                btn.textContent = 'Complete Sale';
+                btn.textContent = checkoutLabel;
             }
         }
 
@@ -447,6 +475,22 @@
                 submitSale();
             }
         });
+
+        let refreshingStock = false;
+        setInterval(async () => {
+            if (document.hidden || !navigator.onLine || refreshingStock) return;
+            refreshingStock = true;
+            try {
+                const response = await fetch(@json(route('pos.stock')), {headers: {Accept: 'application/json'}, cache: 'no-store'});
+                if (!response.ok) return;
+                const data = await response.json();
+                grid.querySelectorAll('.pos-product').forEach((product) => {
+                    const available = Number(data.stock[product.dataset.id] ?? 0);
+                    product.dataset.stock = String(available);
+                    product.disabled = available <= 0;
+                });
+            } catch {} finally { refreshingStock = false; }
+        }, 10000);
 
         // Cash modal logic
         document.getElementById('cash-tendered').addEventListener('input', () => {
@@ -553,7 +597,9 @@
             function setOffline(offline) {
                 banner.hidden = !offline && (parseInt(countEl.textContent) || 0) === 0;
                 if (offline) {
-                    bannerTxt.textContent = 'You\'re offline — sales are saved locally and will sync when you\'re back online.';
+                    bannerTxt.textContent = document.querySelector('[name="verification_required"]').value === '1'
+                        ? 'You are offline. Verified checkout requires a connection; no payment has been confirmed.'
+                        : 'You\'re offline — sales are saved locally and will sync when you\'re back online.';
                     banner.hidden = false;
                 }
             }
