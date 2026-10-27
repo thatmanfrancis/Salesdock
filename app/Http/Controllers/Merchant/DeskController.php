@@ -148,7 +148,7 @@ class DeskController extends MerchantController
         $products = Product::query()->where('tenantId', $tenantId)->where('isActive', true)->get(['id', 'currentStock', 'reservedQty']);
         $quantities = $branchId ? $stock->availableQuantitiesAt($tenantId, $branchId, $products->pluck('id')->all()) : [];
 
-        return response()->json(['stock' => $products->mapWithKeys(fn (Product $product): array => [
+        return response()->json(['paymentMethods' => Tenant::query()->findOrFail($tenantId)->enabledPosPaymentMethods(), 'stock' => $products->mapWithKeys(fn (Product $product): array => [
             $product->id => max(0, min($product->currentStock - $product->reservedQty, $quantities[$product->id] ?? $product->currentStock)),
         ])])->header('Cache-Control', 'no-store');
     }

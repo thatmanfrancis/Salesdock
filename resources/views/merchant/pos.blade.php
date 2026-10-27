@@ -5,6 +5,8 @@
 @section('content')
     @php
         $categories = $products->pluck('category')->filter()->unique()->sort()->values();
+        $paymentMethods = $checkoutPolicy->enabledPosPaymentMethods();
+        $defaultPaymentMethod = array_key_first($paymentMethods) ?? '';
     @endphp
 
     {{-- Offline banner --}}
@@ -88,7 +90,7 @@
 
             <form class="pos-pane" method="post" action="{{ route('pos.store') }}" id="pos-sale" data-pane="cart">
                 @csrf
-                <input type="hidden" name="method" value="{{ $checkoutPolicy->cashlessOnly || $checkoutPolicy->requireVerifiedPayments ? 'CARD' : 'CASH' }}" id="pos-method">
+                <input type="hidden" name="method" value="{{ $defaultPaymentMethod }}" id="pos-method">
                 <input type="hidden" name="verification_required" value="{{ $checkoutPolicy->requireVerifiedPayments ? '1' : '0' }}">
                 <input type="hidden" name="checkoutRequestId" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
                 <input type="hidden" name="discount" value="0">
@@ -104,11 +106,12 @@
                     <p class="due"><span>Total Amount</span><strong id="pos-due">₦0.00</strong></p>
                 </div>
                 <div class="pos-pay">
-                    @unless ($checkoutPolicy->cashlessOnly || $checkoutPolicy->requireVerifiedPayments)
-                        <button type="button" class="on" data-method="CASH">Cash</button>
-                    @endunless
-                    <button type="button" @class(['on' => $checkoutPolicy->cashlessOnly || $checkoutPolicy->requireVerifiedPayments]) data-method="CARD">Card</button>
-                    <button type="button" data-method="TRANSFER">Transfer</button>
+                    @foreach ($paymentMethods as $method => $label)
+                        <button type="button" @class(['on' => $method === $defaultPaymentMethod]) data-method="{{ $method }}">{{ $label }}</button>
+                    @endforeach
+                    @if ($paymentMethods === [])
+                        <p class="hint">No payment methods are available. Ask the owner to update payment settings.</p>
+                    @endif
                 </div>
                 <div class="pos-actions">
                     <div class="pos-hold">
@@ -183,6 +186,7 @@
                     <label for="cash-tendered">Cash received</label>
                     <input id="cash-tendered" type="number" step="0.01" min="0" placeholder="0.00" inputmode="decimal" autocomplete="off">
                 </div>
+                <div class="pos-cash-quick" id="pos-cash-quick" role="group" aria-label="Quick cash amounts"></div>
                 <div class="pos-modal-row pos-modal-change">
                     <span>Change</span>
                     <strong id="cash-change">—</strong>
@@ -287,14 +291,14 @@
             });
             const tax = inclusive ? gross - (gross / (1 + (rate || 0))) : gross * rate;
             const due = inclusive ? gross : gross + tax;
-            currentDue = due;
+            currentDue = Number(due.toFixed(2));
             document.getElementById('pos-sub').textContent = money(inclusive ? gross - tax : gross);
             document.getElementById('pos-tax').textContent = money(tax);
             document.getElementById('pos-due').textContent = money(due);
             const badge = document.getElementById('pos-cart-count');
             badge.hidden = count < 1;
             badge.textContent = count > 9 ? '9+' : String(count);
-            document.getElementById('pos-place').disabled = cart.size === 0;
+            document.getElementById('pos-place').disabled = cart.size === 0 || document.getElementById('pos-method').value === '';
             document.getElementById('pos-hold-open').disabled = cart.size === 0;
             const voidButton = document.getElementById('pos-void');
             if (voidButton) voidButton.disabled = cart.size === 0 && {{ $holds->isEmpty() ? 'true' : 'false' }};
@@ -363,11 +367,11 @@
             document.getElementById('pos-filter').classList.toggle('on', category !== '');
             filterProducts();
         });
-        document.querySelectorAll('.pos-pay button').forEach((button) => {
-            button.addEventListener('click', () => {
-                document.getElementById('pos-method').value = button.dataset.method;
-                document.querySelectorAll('.pos-pay button').forEach((item) => item.classList.toggle('on', item === button));
-            });
+        document.querySelector('.pos-pay').addEventListener('click', (event) => {
+            const button = event.target.closest('button[data-method]');
+            if (!button) return;
+            document.getElementById('pos-method').value = button.dataset.method;
+            document.querySelectorAll('.pos-pay button').forEach((item) => item.classList.toggle('on', item === button));
         });
         document.querySelectorAll('.pos-tabs button').forEach((button) => {
             button.addEventListener('click', () => {
@@ -468,6 +472,20 @@
                 document.getElementById('cash-tendered').value = '';
                 document.getElementById('cash-change').textContent = '—';
                 document.getElementById('pos-cash-confirm').disabled = true;
+                const quickAmounts = document.getElementById('pos-cash-quick');
+                quickAmounts.replaceChildren();
+                const amounts = [Number(currentDue.toFixed(2)), ...new Set([500, 1000, 5000, 10000].map((step) => Math.ceil(currentDue / step) * step).filter((amount) => amount > currentDue))];
+                amounts.forEach((amount, index) => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.textContent = index === 0 ? 'Exact amount' : money(amount);
+                    button.addEventListener('click', () => {
+                        const input = document.getElementById('cash-tendered');
+                        input.value = amount.toFixed(2);
+                        input.dispatchEvent(new Event('input', {bubbles: true}));
+                    });
+                    quickAmounts.append(button);
+                });
                 cashModal.hidden = false;
                 setTimeout(() => document.getElementById('cash-tendered').focus(), 60);
             } else {
@@ -484,6 +502,26 @@
                 const response = await fetch(@json(route('pos.stock')), {headers: {Accept: 'application/json'}, cache: 'no-store'});
                 if (!response.ok) return;
                 const data = await response.json();
+                if (data.paymentMethods) {
+                    const methods = Object.entries(data.paymentMethods);
+                    const visible = Array.from(document.querySelectorAll('.pos-pay button[data-method]')).map((button) => button.dataset.method);
+                    if (visible.join(',') !== methods.map(([method]) => method).join(',')) {
+                        const selected = document.getElementById('pos-method');
+                        if (!Object.hasOwn(data.paymentMethods, selected.value)) selected.value = methods[0]?.[0] || '';
+                        const pay = document.querySelector('.pos-pay');
+                        pay.replaceChildren();
+                        methods.forEach(([method, label]) => {
+                            const button = document.createElement('button');
+                            button.type = 'button';
+                            button.dataset.method = method;
+                            button.textContent = label;
+                            button.classList.toggle('on', method === selected.value);
+                            pay.append(button);
+                        });
+                        if (!Object.hasOwn(data.paymentMethods, 'CASH')) cashModal.hidden = true;
+                        paint();
+                    }
+                }
                 grid.querySelectorAll('.pos-product').forEach((product) => {
                     const available = Number(data.stock[product.dataset.id] ?? 0);
                     product.dataset.stock = String(available);

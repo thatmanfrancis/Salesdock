@@ -84,14 +84,8 @@
                         <form method="post" action="{{ route('profile.update') }}" data-busy>
                             @csrf
                             <input type="hidden" name="section" value="pin">
-                            <label>
-                                <span>New PIN <span class="req">*</span></span>
-                                <input name="pin" inputmode="numeric" pattern="[0-9]{4,6}" minlength="4" maxlength="6" required autocomplete="off" placeholder="4–6 digits">
-                            </label>
-                            <label>
-                                <span>Confirm PIN <span class="req">*</span></span>
-                                <input name="pin_confirmation" inputmode="numeric" pattern="[0-9]{4,6}" minlength="4" maxlength="6" required autocomplete="off" placeholder="4–6 digits">
-                            </label>
+                            <x-ui.pin-input name="pin" label="New PIN" />
+                            <x-ui.pin-input name="pin_confirmation" label="Confirm PIN" />
                             <label>
                                 <span>Current password <span class="req">*</span></span>
                                 <input type="password" name="current" required autocomplete="current-password">

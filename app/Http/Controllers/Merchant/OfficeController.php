@@ -1252,7 +1252,13 @@ class OfficeController extends MerchantController
 
     private function savePayments(Request $request): RedirectResponse
     {
+        if ($request->boolean('paymentMethodsPresent')) {
+            $request->merge(['posPaymentMethods' => $request->input('posPaymentMethods', [])]);
+        }
         $data = $request->validate([
+            'paymentMethodsPresent' => ['nullable', 'boolean'],
+            'posPaymentMethods' => ['sometimes', 'array', 'min:1'],
+            'posPaymentMethods.*' => ['required', 'string', Rule::in(array_keys(Tenant::POS_PAYMENT_METHODS)), 'distinct'],
             'cashlessOnly' => ['nullable', 'boolean'],
             'requireVerifiedPayments' => ['nullable', 'boolean'],
             'bankCode' => ['nullable', 'required_with:bankAccount', 'string', 'max:20'],
@@ -1260,6 +1266,14 @@ class OfficeController extends MerchantController
             'accountName' => ['nullable', 'string', 'max:255'],
         ]);
         $tenant = Tenant::query()->findOrFail($this->tenantId());
+        $tenant->fill([
+            'cashlessOnly' => $request->boolean('cashlessOnly'),
+            'requireVerifiedPayments' => $request->boolean('requireVerifiedPayments'),
+            'posPaymentMethods' => $data['posPaymentMethods'] ?? $tenant->posPaymentMethods,
+        ]);
+        if ($tenant->enabledPosPaymentMethods() === []) {
+            throw ValidationException::withMessages(['posPaymentMethods' => 'Enable at least one payment method that works with your cashless and verification settings.']);
+        }
         if (! empty($data['bankAccount'])) {
             $store = StorefrontConfig::query()->firstOrNew(['tenantId' => $tenant->id]);
             try {
@@ -1633,8 +1647,8 @@ class OfficeController extends MerchantController
     {
         $data = $request->validate([
             'current' => ['required', 'string'],
-            'pin' => ['required', 'digits_between:4,6'],
-            'pin_confirmation' => ['required', 'same:pin'],
+            'pin' => ['required', 'digits:4'],
+            'pin_confirmation' => ['required', 'digits:4', 'same:pin'],
         ], [
             'pin_confirmation.same' => 'The PINs do not match.',
         ]);

@@ -16,7 +16,7 @@
     <input type="hidden" name="{{ $name }}" value="{{ $value }}" data-select-value>
     @if ($searchable)
     <div class="ui-menu ui-searchable-menu" hidden data-select-menu>
-        <input type="search" placeholder="Search categories…" aria-label="Search {{ $label }}" autocomplete="off" data-select-search>
+        <input type="search" placeholder="Search {{ strtolower($label) }}…" aria-label="Search {{ $label }}" autocomplete="off" data-select-search>
         <ul class="ui-select-options" role="listbox" aria-label="{{ $label }}">
             @foreach ($options as $key => $text)
                 <li>
@@ -24,7 +24,7 @@
                 </li>
             @endforeach
         </ul>
-        <p hidden data-select-empty role="status">No matching categories.</p>
+        <p hidden data-select-empty role="status">No matching options.</p>
     </div>
     @else
     <ul class="ui-menu" role="listbox" hidden data-select-menu>

@@ -112,8 +112,14 @@
                             @csrf
                             <input type="hidden" name="section" value="payments">
                             <p class="kicker">In-store payments</p>
+                            <input type="hidden" name="paymentMethodsPresent" value="1">
+                            <p class="hint">Choose which payment buttons cashiers can use at the register.</p>
+                            @foreach (\App\Models\Tenant::POS_PAYMENT_METHODS as $method => $label)
+                                <label class="switch"><span>{{ $label }}</span><input type="checkbox" name="posPaymentMethods[]" value="{{ $method }}" @checked(in_array($method, old('paymentMethodsPresent') ? old('posPaymentMethods', []) : ($tenant->posPaymentMethods ?? array_keys(\App\Models\Tenant::POS_PAYMENT_METHODS)), true))></label>
+                            @endforeach
                             <label class="switch"><span>Cashless payments only</span><input type="checkbox" name="cashlessOnly" value="1" @checked(old('section') === 'payments' ? old('cashlessOnly') : $tenant->cashlessOnly)></label>
                             <label class="switch"><span>Require payment provider confirmation</span><input type="checkbox" name="requireVerifiedPayments" value="1" @checked(old('section') === 'payments' ? old('requireVerifiedPayments') : $tenant->requireVerifiedPayments)></label>
+                            <p class="hint">Cash is also hidden when cashless-only payments or provider confirmation is enabled.</p>
                             <p class="hint">Verified checkout accepts online card and bank-transfer payments. Cash and unconnected physical terminals cannot complete these sales. Pending verified sales still require confirmation if you later turn this setting off.</p>
                             <p class="hint">All branches use this collection account. Sales retain their branch, cashier and payment references for reconciliation.</p>
                             @if ($payoutConnected)
@@ -121,7 +127,7 @@
                             @else
                                 <p class="hint">Connect your collection account before enabling provider confirmation.</p>
                             @endif
-                            <label><span>Collection bank (leave blank to keep current account)</span><select name="bankCode"><option value="">Keep current account</option>@foreach ($banks as $code => $name)<option value="{{ $code }}" @selected(old('bankCode') === (string) $code)>{{ $name }}</option>@endforeach</select></label>
+                            <x-ui.select name="bankCode" label="Collection bank (leave blank to keep current account)" :value="old('bankCode', '')" :options="['' => 'Keep current account'] + ($banks ?? [])" searchable />
                             <label><span>Account number</span><input name="bankAccount" inputmode="numeric" maxlength="10" value="{{ old('bankAccount') }}" autocomplete="off"></label>
                             <label><span>Account name</span><input name="accountName" value="{{ old('accountName') }}"></label>
                             <div class="ui-modal-actions"><button type="submit" data-loading="Saving…"><span data-label>Save payment settings</span></button></div>
@@ -213,7 +219,7 @@
                             @endif
                             <div class="settings-grid">
                                 <div class="wide">
-                                    <x-ui.select name="bankCode" label="Bank" :value="old('bankCode', $store->bankCode)" :options="['' => 'Choose your bank'] + ($banks ?? [])" required />
+                                    <x-ui.select name="bankCode" label="Bank" :value="old('bankCode', $store->bankCode)" :options="['' => 'Choose your bank'] + ($banks ?? [])" searchable required />
                                 </div>
                                 <label>
                                     <span>Account number <span class="req">*</span></span>

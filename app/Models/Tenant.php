@@ -10,6 +10,19 @@ class Tenant extends Model
 {
     use SoftDeletes;
 
+    public const POS_PAYMENT_METHODS = ['CASH' => 'Cash', 'CARD' => 'Card', 'TRANSFER' => 'Transfer'];
+
+    /** @return array<string, string> */
+    public function enabledPosPaymentMethods(): array
+    {
+        $methods = array_intersect_key(self::POS_PAYMENT_METHODS, array_flip($this->posPaymentMethods ?? array_keys(self::POS_PAYMENT_METHODS)));
+        if ($this->cashlessOnly || $this->requireVerifiedPayments) {
+            unset($methods['CASH']);
+        }
+
+        return $methods;
+    }
+
     /**
      * Days a deleted shop can still be restored before it is erased for good.
      */
@@ -79,6 +92,7 @@ class Tenant extends Model
             'isActive' => 'boolean',
             'cashlessOnly' => 'boolean',
             'requireVerifiedPayments' => 'boolean',
+            'posPaymentMethods' => 'array',
             'restockDrafts' => 'boolean',
             'approvedAt' => 'datetime',
             'profileCompletedAt' => 'datetime',

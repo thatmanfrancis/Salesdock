@@ -468,6 +468,93 @@ class PosPaymentTest extends TestCase
             ->getJson(route('pos.stock'))->assertOk()->assertJsonPath('stock.'.$product->id, 8);
     }
 
+    public function test_owner_can_choose_payment_methods_without_changing_another_shop(): void
+    {
+        [$owner] = $this->shop();
+        [$other] = $this->shop();
+
+        $this->withoutMiddleware(ShareWorkspace::class)->actingAs($owner)
+            ->post(route('settings.update'), ['section' => 'payments', 'paymentMethodsPresent' => 1, 'posPaymentMethods' => ['TRANSFER']])
+            ->assertSessionHasNoErrors()->assertRedirect(route('settings', ['section' => 'payments']));
+
+        $this->assertSame(['TRANSFER'], $owner->tenant->posPaymentMethods);
+        $this->assertNull($other->tenant->posPaymentMethods);
+        $response = $this->get(route('pos'))->assertOk()
+            ->assertSee('data-method="TRANSFER"', false)->assertSee('value="TRANSFER" id="pos-method"', false);
+        $document = new \DOMDocument;
+        $document->loadHTML($response->getContent(), LIBXML_NOERROR | LIBXML_NOWARNING);
+        $buttons = (new \DOMXPath($document))->query('//div[@class="pos-pay"]/button/@data-method');
+        $this->assertSame(['TRANSFER'], array_map(fn ($attribute): string => $attribute->nodeValue, iterator_to_array($buttons)));
+        $this->getJson(route('pos.stock'))->assertJsonPath('paymentMethods', ['TRANSFER' => 'Transfer']);
+    }
+
+    #[TestWith(['CASH'])]
+    #[TestWith(['CARD'])]
+    #[TestWith(['POS_TERMINAL'])]
+    public function test_disabled_methods_cannot_be_submitted_directly(string $method): void
+    {
+        [$owner, $product] = $this->shop(['posPaymentMethods' => ['TRANSFER']]);
+
+        $this->withoutMiddleware(ShareWorkspace::class)->actingAs($owner)
+            ->postJson(route('pos.store'), ['qty' => [$product->id => 1], 'method' => $method])
+            ->assertUnprocessable()->assertJsonValidationErrors('method');
+
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertSame(10, $product->fresh()->currentStock);
+    }
+
+    #[TestWith([])]
+    #[TestWith(['CASH', 'CARD', 'CHEQUE'])]
+    public function test_payment_settings_require_valid_methods(string ...$methods): void
+    {
+        [$owner] = $this->shop();
+
+        $this->withoutMiddleware(ShareWorkspace::class)->actingAs($owner)
+            ->post(route('settings.update'), ['section' => 'payments', 'paymentMethodsPresent' => 1, 'posPaymentMethods' => $methods])
+            ->assertSessionHasErrors();
+
+        $this->assertNull($owner->tenant->posPaymentMethods);
+    }
+
+    public function test_cashless_settings_cannot_leave_only_cash_enabled(): void
+    {
+        [$owner] = $this->shop();
+
+        $this->withoutMiddleware(ShareWorkspace::class)->actingAs($owner)
+            ->post(route('settings.update'), ['section' => 'payments', 'cashlessOnly' => 1, 'paymentMethodsPresent' => 1, 'posPaymentMethods' => ['CASH']])
+            ->assertSessionHasErrors('posPaymentMethods');
+
+        $this->assertFalse($owner->tenant->cashlessOnly);
+    }
+
+    public function test_held_sale_cannot_complete_after_its_payment_method_is_disabled(): void
+    {
+        [$owner, $product] = $this->shop();
+        $order = $this->pending($owner, $product);
+        Tenant::query()->whereKey($owner->tenantId)->update(['posPaymentMethods' => json_encode(['TRANSFER'])]);
+
+        $this->withoutMiddleware(ShareWorkspace::class)->actingAs($owner)
+            ->postJson(route('orders.complete', $order))->assertUnprocessable()->assertJsonValidationErrors('payment');
+
+        $this->assertSame('PENDING', $order->fresh()->status);
+        $this->assertSame(2, $product->fresh()->reservedQty);
+    }
+
+    public function test_in_flight_verified_payment_can_settle_after_its_method_is_disabled(): void
+    {
+        [$owner, $product] = $this->shop(['requireVerifiedPayments' => true]);
+        $order = $this->pending($owner, $product);
+        $this->prepareAttempt($order);
+        Tenant::query()->whereKey($owner->tenantId)->update(['posPaymentMethods' => json_encode(['TRANSFER'])]);
+        Http::preventStrayRequests();
+        Http::fake(['api.paystack.co/transaction/123' => Http::response(['status' => true, 'data' => $this->providerPayment($order)])]);
+
+        $this->webhook(['event' => 'charge.success', 'data' => ['id' => 123]])->assertOk();
+
+        $this->assertSame('COMPLETED', $order->fresh()->status);
+        Http::assertSentCount(1);
+    }
+
     public function test_payment_and_settings_screens_render(): void
     {
         [$owner, $product] = $this->shop(['requireVerifiedPayments' => true]);

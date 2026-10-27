@@ -50,6 +50,10 @@ class SaleRecorder
             if ($isPos && $tenant->cashlessOnly && $method === 'CASH') {
                 throw ValidationException::withMessages(['method' => 'Cash payments are disabled for this business.']);
             }
+            $configuredMethod = $method === 'POS_TERMINAL' ? 'CARD' : $method;
+            if ($isPos && ! array_key_exists($configuredMethod, $tenant->enabledPosPaymentMethods())) {
+                throw ValidationException::withMessages(['method' => 'This payment method is disabled for this business. Choose an enabled method.']);
+            }
             $verificationRequired = $isPos && $tenant->requireVerifiedPayments;
             if ($verificationRequired && in_array($method, ['CASH', 'POS_TERMINAL'], true)) {
                 throw ValidationException::withMessages(['method' => 'Use card or transfer through verified online checkout. Physical terminals must be connected before they can confirm payments.']);
@@ -251,6 +255,14 @@ class SaleRecorder
             }
             if ($requiresVerification && ! $verified) {
                 throw ValidationException::withMessages(['payment' => 'This sale requires payment provider confirmation.']);
+            }
+            if ($order->channel === 'POS' && ! $verified) {
+                $method = Transaction::query()->where('orderId', $order->id)->value('method');
+                $configuredMethod = $method === 'POS_TERMINAL' ? 'CARD' : $method;
+                $tenant = Tenant::query()->findOrFail($order->tenantId);
+                if (! array_key_exists((string) $configuredMethod, $tenant->enabledPosPaymentMethods())) {
+                    throw ValidationException::withMessages(['payment' => 'This payment method is disabled. Restore this sale to the register and choose an enabled method.']);
+                }
             }
 
             $items = OrderItem::query()->where('orderId', $order->id)->get();
