@@ -41,9 +41,12 @@ interface PaymentGateway
     public function updateSubaccount(string $subaccountId, array $shop): void;
 
     /**
-     * @param  array{reference: string, amount: float, email: string, name?: ?string, phone?: ?string, redirect: string, title: string, description: string, subaccountId?: ?string, attemptReference?: string}  $payment
+     * @param  array{reference: string, amount: float, email: string, name?: ?string, phone?: ?string, redirect: string, title: string, description: string, subaccountId?: ?string, attemptReference?: string, platformFee?: float, cardOnly?: bool}  $payment
      */
     public function checkoutLink(array $payment): string;
+
+    /** @param array{reference: string, amount: float, email: string, token: string} $payment */
+    public function chargeAuthorization(array $payment): void;
 
     /**
      * Normalized payment: id, tx_ref, amount (NGN), currency, status, created_at, gateway.

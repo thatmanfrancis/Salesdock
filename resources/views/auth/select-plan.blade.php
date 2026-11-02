@@ -56,6 +56,11 @@
                                 <p class="per monthly mb-5 text-xs text-gray-400">{{ (float) $plan->monthlyPrice <= 0 ? 'no payment required' : 'per mo' }}</p>
                                 <p class="per quarterly mb-5 hidden text-xs text-gray-400">{{ (float) $plan->quarterlyPrice <= 0 ? 'no payment required' : 'per qtr' }}</p>
                                 <p class="per annual mb-5 hidden text-xs text-gray-400">{{ (float) $plan->annualPrice <= 0 ? 'no payment required' : 'per yr' }}</p>
+                                @foreach (['MONTHLY' => 'monthly', 'QUARTERLY' => 'quarterly', 'ANNUALLY' => 'annual'] as $offerCycle => $offerClass)
+                                    @if (isset($plan->introductoryPricing[$offerCycle]))
+                                        <p @class(['per mb-5 text-sm text-gray-600', $offerClass, 'hidden' => $offerCycle !== 'MONTHLY'])>For a shop's first paid subscription: {{ $money($plan->introductoryPricing[$offerCycle]['amount']) }} per billing period for {{ $plan->introductoryPricing[$offerCycle]['periods'] }} paid period(s), then the regular price above.</p>
+                                    @endif
+                                @endforeach
                                 <ul class="space-y-2.5 text-sm text-gray-600">
                                     <li>{{ $limit($plan->maxBranches, 'branch', 'branches', 'Unlimited branches') }}</li>
                                     <li>{{ $limit($plan->maxUsers, 'staff', 'staff', 'Unlimited staff') }}</li>

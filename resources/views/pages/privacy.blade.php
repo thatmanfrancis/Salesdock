@@ -23,7 +23,7 @@
 
 @section('content')
     <article class="legal">
-        <p class="updated">Last updated: 8 October 2026</p>
+        <p class="updated">Last updated: 2 November 2026</p>
 
         <nav class="toc">
             <strong>On this page</strong>
@@ -42,7 +42,7 @@
             <li><strong>Account details:</strong> business name, owner name, email address, phone number, business address, and optional business registration details such as TIN and RC number.</li>
             <li><strong>Staff details:</strong> names, emails and roles of the staff you add, and the times they sign in and out.</li>
             <li><strong>Shop records:</strong> products, stock levels, sales, refunds, expenses, suppliers, purchase orders and customer records that you enter.</li>
-            <li><strong>Billing details:</strong> your plan, invoices and payment status. Card and bank details are entered on our payment partner's page; we do not store full card numbers.</li>
+            <li><strong>Billing details:</strong> your plan, invoices and payment status. Card details are entered on the payment provider's hosted page; we do not store full card numbers, card PINs or CVV codes. If you opt in to automatic renewal, we store an encrypted provider authorisation token, its associated email, limited card identifiers such as brand and last four digits, and the approved amount and interval. We also keep the authorisation text and version, approving user reference, timestamp, IP address and browser information, plus withdrawal and payment records. Merchant collection bank details entered in Settings are stored to arrange payouts and do not authorise subscription debits.</li>
             <li><strong>Technical data:</strong> IP address, browser and device type, and activity logs we use to keep accounts secure and to fix problems.</li>
             <li><strong>Support messages:</strong> anything you send us through support tickets, email, phone or chat.</li>
         </ul>
@@ -50,7 +50,7 @@
         <h2 id="use">3. How we use it</h2>
         <ul>
             <li>To create and run your account and give you the features of your plan.</li>
-            <li>To process subscription payments and send receipts, reminders and account notices.</li>
+            <li>To process subscription payments, carry out separately authorised recurring card renewals, document approval or withdrawal, reconcile payments and send receipts, reminders and account notices. You can withdraw automatic-renewal authorisation in Billing; processing of completed payments and records may continue where needed for contract administration or applicable legal obligations.</li>
             <li>To keep SalesDock secure, for example detecting suspicious sign-ins and keeping audit logs of sensitive actions.</li>
             <li>To answer support requests and, with your permission, to help you inside your shop.</li>
             <li>To improve SalesDock using aggregated usage information that does not identify you.</li>
@@ -63,7 +63,7 @@
         <h2 id="sharing">5. Who we share it with</h2>
         <p>We only share data with service providers that help us run SalesDock, under agreements that require them to protect it:</p>
         <ul>
-            <li><strong>Payments:</strong> Flutterwave, to process subscription and storefront payments.</li>
+            <li><strong>Payments:</strong> the provider identified at checkout, currently Flutterwave or Paystack, to process card authorisations, subscription renewals and storefront payments. We share transaction references, amounts and relevant payer details with that provider.</li>
             <li><strong>Email:</strong> Zoho ZeptoMail, to deliver account, billing and supplier emails.</li>
             <li><strong>Live chat:</strong> tawk.to, if you use the chat window on our website.</li>
             <li><strong>Security and bot protection:</strong> Cloudflare, which serves our website and runs the Turnstile check on sign-in, sign-up, password reset and checkout forms. It processes your IP address and basic browser signals to tell people from automated attacks.</li>
@@ -83,6 +83,7 @@
         </ul>
 
         <h2 id="rights">8. Your rights</h2>
+        <p>Turning off automatic renewal stops future scheduled card-charge submissions and removes the stored reusable token from the active subscription. It does not delete invoices or the evidence of approval, withdrawal and payments that we may still need to retain. See the <a href="{{ route('recurring.terms') }}">Recurring Card Payment Authorisation</a> for cancellation and pending-charge details.</p>
         <p>You can ask to access, correct, export or delete your personal data, object to or restrict how we use it, or withdraw consent you have given. Shop owners can update most details directly in Settings. For anything else, email <a href="mailto:{{ $contact['email'] }}">{{ $contact['email'] }}</a> and we will respond within 30 days. You may also complain to the Nigeria Data Protection Commission.</p>
 
         <h2 id="cookies">9. Cookies</h2>

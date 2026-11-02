@@ -65,8 +65,11 @@
 
         // Poll for unread count every 30 s and update badge in-place
         function pollBellUnread() {
-            fetch(@json(route('notifications.unread')), { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-                .then((r) => r.json())
+            fetch(@json(route('notifications.unread', [], false)), { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                .then((r) => {
+                    if (!r.ok || r.redirected) throw new Error('Notification lookup unavailable.');
+                    return r.json();
+                })
                 .then((data) => {
                     const count = data.unread || 0;
                     let badge = button.querySelector('.bell-count');

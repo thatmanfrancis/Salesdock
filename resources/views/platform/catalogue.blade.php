@@ -13,8 +13,12 @@
     $openCategories = $reopenCategory || $reopenCategoriesBulk;
     $itemTab = $reopenBulk ? 'many' : ($reopenCsv ? 'csv' : 'one');
     $categoryTab = $reopenCategoriesBulk ? 'many' : 'one';
-    $categoryNames = collect($categoryRows)->pluck('name');
+    $categoryNames = collect($categories)->except('')->keys();
     $pickedCategory = old('category', '');
+    $itemCategories = collect($categories)->except('')->all();
+    if ($pickedCategory !== '' && ! array_key_exists($pickedCategory, $itemCategories)) {
+        $itemCategories[$pickedCategory] = $pickedCategory;
+    }
 @endphp
 
 @section('content')
@@ -22,22 +26,24 @@
         <div class="page-head">
             <div class="heading">
                 <h1>Catalogue</h1>
-                <span class="tally">{{ number_format($total) }} total</span>
+                <span class="tally" data-catalogue-total>{{ number_format($total) }} total</span>
             </div>
             <div class="row-actions">
                 <x-ui.filter :action="route('admin.catalogue')" :active="$filtered" label="Filter catalogue">
                     <div class="ui-field">
                         <span>Search</span>
-                        <input type="search" name="q" value="{{ $q }}" placeholder="Name, brand, or barcode" maxlength="80">
+                        <input type="search" name="q" value="{{ $q }}" placeholder="Name, SKU, brand, barcode, or category" maxlength="80">
                     </div>
-                    <x-ui.select name="category" label="Category" :value="$category" :options="$categories" />
+                    <x-ui.select name="category" label="Category" :value="$category" :options="$categories" searchable />
                 </x-ui.filter>
                 <button type="button" data-add-category>Add category</button>
                 <button type="button" data-create>New item</button>
             </div>
         </div>
         <p class="muted">Shops search this list and add a product with their own price and stock.</p>
+        <p class="muted" role="status" aria-live="polite" data-catalogue-status></p>
 
+        <div data-catalogue-results>
         @if ($category === '')
         <section class="card orders">
             <table>
@@ -56,12 +62,16 @@
                             <td>{{ number_format($row['items']) }}</td>
                             <td>{{ number_format($row['stores']) }}</td>
                             <td>
-                                <div class="row-actions">
-                                    <a href="{{ route('admin.catalogue', ['category' => $row['name']]) }}#catalogue-products">View products</a>
+                                <div class="row-actions catalogue-category-actions">
+                                    <a class="catalogue-action-icon" href="{{ route('admin.catalogue', ['category' => $row['name'], 'q' => $q]) }}#catalogue-products" aria-label="View products in {{ $row['name'] }}" title="View products">
+                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+                                    </a>
                                     <button type="button" class="detail" data-category-detail='@json($row)'>Details</button>
                                     <button type="button" class="detail" data-rename data-name="{{ $row['name'] }}">Rename</button>
                                     @if ($row['stores'] === 0)
-                                        <button type="button" class="quiet" data-ask data-url="{{ route('admin.catalogue.categories.destroy') }}" data-name="{{ $row['name'] }}" data-title="Delete category" data-copy="Delete {{ $row['name'] }}? Catalogue items in it become uncategorised." data-label="Delete" data-loading="Deleting…" data-tone="danger">Delete</button>
+                                        <button type="button" class="quiet catalogue-action-icon" aria-label="Delete {{ $row['name'] }}" title="Delete category" data-ask data-url="{{ route('admin.catalogue.categories.destroy') }}" data-name="{{ $row['name'] }}" data-title="Delete category" data-copy="Delete {{ $row['name'] }}? Catalogue items in it become uncategorised." data-label="Delete" data-loading="Deleting…" data-tone="danger">
+                                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M5 6l1 14a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l1-14M10 10v7M14 10v7"/></svg>
+                                        </button>
                                     @endif
                                 </div>
                             </td>
@@ -140,6 +150,7 @@
                 @endif
             </nav>
         </section>
+        </div>
     </div>
 
     {{-- New / edit item: tabs for One, Multiple, CSV (tabs hidden while editing) --}}
@@ -166,18 +177,7 @@
                     <input type="text" name="name" value="{{ old('name') }}" required maxlength="255">
                 </div>
                 <div class="ui-modal-grid">
-                    <div class="ui-field">
-                        <span>Category <span class="req">*</span></span>
-                        <select name="category" required>
-                            <option value="" disabled @selected($pickedCategory === '')>Choose a category</option>
-                            @foreach ($categoryNames as $name)
-                                <option value="{{ $name }}" @selected($pickedCategory === $name)>{{ $name }}</option>
-                            @endforeach
-                            @if ($pickedCategory !== '' && ! $categoryNames->contains($pickedCategory))
-                                <option value="{{ $pickedCategory }}" selected>{{ $pickedCategory }}</option>
-                            @endif
-                        </select>
-                    </div>
+                    <x-ui.select name="category" label="Category" :value="$pickedCategory" :options="['' => 'Choose a category'] + $itemCategories" searchable required />
                     <div class="ui-field">
                         <span>SKU</span>
                         <input type="text" name="sku" value="{{ old('sku') }}" maxlength="120">
@@ -351,6 +351,94 @@
     </datalist>
 
     <script>
+        const catalogueResults = document.querySelector('[data-catalogue-results]');
+        const catalogueStatus = document.querySelector('[data-catalogue-status]');
+        const catalogueFilter = document.querySelector('[data-filter]');
+        const catalogueForm = catalogueFilter.querySelector('form');
+        const catalogueSearch = catalogueForm.elements.namedItem('q');
+        const catalogueCategory = catalogueForm.elements.namedItem('category');
+        let catalogueRequest;
+        let catalogueTimer;
+        let catalogueRevision = 0;
+        let syncingCatalogueFilters = false;
+        const syncCatalogueFilters = (url, preserveTyping = false) => {
+            syncingCatalogueFilters = true;
+            if (!preserveTyping || document.activeElement !== catalogueSearch) catalogueSearch.value = url.searchParams.get('q') || '';
+            catalogueCategory.value = url.searchParams.get('category') || '';
+            catalogueCategory.dispatchEvent(new Event('change', { bubbles: true }));
+            catalogueFilter.querySelector('[data-filter-open]').classList.toggle('on', !!(catalogueSearch.value || catalogueCategory.value));
+            syncingCatalogueFilters = false;
+        };
+        const refreshCatalogue = async (url, pushHistory = true) => {
+            clearTimeout(catalogueTimer);
+            catalogueRequest?.abort();
+            const revision = ++catalogueRevision;
+            catalogueRequest = new AbortController();
+            catalogueResults.setAttribute('aria-busy', 'true');
+            catalogueStatus.textContent = 'Updating catalogue…';
+            try {
+                const response = await fetch(url, { headers: { Accept: 'text/html' }, cache: 'no-store', signal: catalogueRequest.signal });
+                if (!response.ok || response.redirected) throw new Error('Could not update the catalogue. Please try again.');
+                const next = new DOMParser().parseFromString(await response.text(), 'text/html');
+                if (revision !== catalogueRevision) return;
+                const results = next.querySelector('[data-catalogue-results]');
+                const total = next.querySelector('[data-catalogue-total]');
+                if (!results || !total) throw new Error('Could not update the catalogue. Please reload the page.');
+                catalogueResults.replaceChildren(...Array.from(results.childNodes));
+                document.querySelector('[data-catalogue-total]').textContent = total.textContent;
+                syncCatalogueFilters(url, true);
+                if (pushHistory && url.href !== location.href) history.pushState(null, '', url);
+                catalogueStatus.textContent = total.textContent + ' matching catalogue items.';
+            } catch (error) {
+                if (error.name !== 'AbortError' && revision === catalogueRevision) catalogueStatus.textContent = error.message;
+            } finally {
+                if (revision === catalogueRevision) catalogueResults.removeAttribute('aria-busy');
+            }
+        };
+        const catalogueFilterUrl = () => {
+            const url = new URL(catalogueForm.action);
+            if (catalogueSearch.value.trim()) url.searchParams.set('q', catalogueSearch.value.trim());
+            if (catalogueCategory.value) url.searchParams.set('category', catalogueCategory.value);
+            return url;
+        };
+        catalogueSearch.addEventListener('input', () => {
+            clearTimeout(catalogueTimer);
+            catalogueRequest?.abort();
+            ++catalogueRevision;
+            catalogueTimer = setTimeout(() => refreshCatalogue(catalogueFilterUrl()), 350);
+        });
+        catalogueCategory.addEventListener('change', () => {
+            if (!syncingCatalogueFilters) refreshCatalogue(catalogueFilterUrl());
+        });
+        catalogueForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            refreshCatalogue(catalogueFilterUrl());
+        });
+        catalogueForm.querySelector('.ui-filter-actions a').addEventListener('click', (event) => {
+            event.preventDefault();
+            const url = new URL(catalogueForm.action);
+            syncCatalogueFilters(url);
+            refreshCatalogue(url);
+        });
+        catalogueResults.addEventListener('click', (event) => {
+            const link = event.target.closest('a[href]');
+            if (!link || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+            const url = new URL(link.href);
+            if (url.origin !== location.origin || url.pathname !== new URL(catalogueForm.action).pathname) return;
+            event.preventDefault();
+            refreshCatalogue(url);
+        });
+        window.addEventListener('popstate', () => {
+            const url = new URL(location.href);
+            syncCatalogueFilters(url);
+            refreshCatalogue(url, false);
+        });
+        const onCatalogueAction = (selector, action) => {
+            catalogueResults.addEventListener('click', (event) => {
+                const button = event.target.closest(selector);
+                if (button) action(button);
+            });
+        };
         const closeModal = (box) => { if (box && !box.querySelector('button.is-busy')) box.hidden = true; };
 
         const switchTab = (modal, tab) => {
@@ -367,7 +455,10 @@
         const fill = (values) => {
             ['name', 'sku', 'brand', 'category', 'unit', 'barcode', 'description', 'item'].forEach((name) => {
                 const field = itemForm.querySelector('[name="' + name + '"]');
-                if (field) field.value = values[name] || '';
+                if (field) {
+                    field.value = values[name] || '';
+                    if (name === 'category') field.dispatchEvent(new Event('change', { bubbles: true }));
+                }
             });
             itemForm.querySelector('[name="isActive"]').checked = values.active !== '0';
         };
@@ -384,26 +475,24 @@
         itemTabs.querySelectorAll('[data-tab]').forEach((btn) => {
             btn.addEventListener('click', () => switchTab(itemModal, btn.dataset.tab));
         });
-        document.querySelectorAll('[data-edit]').forEach((button) => {
-            button.addEventListener('click', () => {
-                itemForm.action = button.dataset.url;
-                itemMethod.value = 'PUT';
-                itemTitle.textContent = 'Edit item';
-                fill({
-                    item: button.dataset.url.split('/').pop(),
-                    name: button.dataset.name,
-                    sku: button.dataset.sku,
-                    brand: button.dataset.brand,
-                    category: button.dataset.category,
-                    unit: button.dataset.unit,
-                    barcode: button.dataset.barcode,
-                    description: button.dataset.description,
-                    active: button.dataset.active,
-                });
-                itemTabs.hidden = true;
-                switchTab(itemModal, 'one');
-                itemModal.hidden = false;
+        onCatalogueAction('[data-edit]', (button) => {
+            itemForm.action = button.dataset.url;
+            itemMethod.value = 'PUT';
+            itemTitle.textContent = 'Edit item';
+            fill({
+                item: button.dataset.url.split('/').pop(),
+                name: button.dataset.name,
+                sku: button.dataset.sku,
+                brand: button.dataset.brand,
+                category: button.dataset.category,
+                unit: button.dataset.unit,
+                barcode: button.dataset.barcode,
+                description: button.dataset.description,
+                active: button.dataset.active,
             });
+            itemTabs.hidden = true;
+            switchTab(itemModal, 'one');
+            itemModal.hidden = false;
         });
         itemModal.querySelectorAll('[data-close]').forEach((btn) => btn.addEventListener('click', () => closeModal(itemModal)));
 
@@ -502,31 +591,27 @@
         const askForm = askModal.querySelector('form');
         const askNameField = askForm.querySelector('[name="name"]');
         const askSubmit = askForm.querySelector('[type="submit"]');
-        document.querySelectorAll('[data-ask]').forEach((button) => {
-            button.addEventListener('click', () => {
-                askForm.action = button.dataset.url;
-                askModal.querySelector('[data-ask-title]').textContent = button.dataset.title || 'Are you sure?';
-                askModal.querySelector('[data-ask-copy]').textContent = button.dataset.copy || '';
-                askSubmit.dataset.loading = button.dataset.loading || 'Deleting…';
-                askSubmit.querySelector('[data-label]').textContent = button.dataset.label || 'Delete';
-                if (askNameField) askNameField.value = button.dataset.name || '';
-                askModal.hidden = false;
-            });
+        onCatalogueAction('[data-ask]', (button) => {
+            askForm.action = button.dataset.url;
+            askModal.querySelector('[data-ask-title]').textContent = button.dataset.title || 'Are you sure?';
+            askModal.querySelector('[data-ask-copy]').textContent = button.dataset.copy || '';
+            askSubmit.dataset.loading = button.dataset.loading || 'Deleting…';
+            askSubmit.querySelector('[data-label]').textContent = button.dataset.label || 'Delete';
+            if (askNameField) askNameField.value = button.dataset.name || '';
+            askModal.hidden = false;
         });
         askModal.querySelectorAll('[data-close]').forEach((btn) => btn.addEventListener('click', () => closeModal(askModal)));
 
         // ── Rename ────────────────────────────────────────────────────────────
         const renameModal = document.querySelector('[data-rename-modal]');
-        document.querySelectorAll('[data-rename]').forEach((button) => {
-            button.addEventListener('click', () => {
-                const nameInput = renameModal.querySelector('[name="name"]');
-                const fromInput = renameModal.querySelector('[name="from"]');
-                const currentName = button.dataset.name || '';
-                fromInput.value = currentName;
-                nameInput.value = currentName;
-                renameModal.hidden = false;
-                nameInput.select();
-            });
+        onCatalogueAction('[data-rename]', (button) => {
+            const nameInput = renameModal.querySelector('[name="name"]');
+            const fromInput = renameModal.querySelector('[name="from"]');
+            const currentName = button.dataset.name || '';
+            fromInput.value = currentName;
+            nameInput.value = currentName;
+            renameModal.hidden = false;
+            nameInput.select();
         });
         renameModal.querySelectorAll('[data-close]').forEach((btn) => btn.addEventListener('click', () => closeModal(renameModal)));
 
@@ -535,32 +620,30 @@
         const detailName = detailModal.querySelector('[data-detail-name]');
         const detailCounts = detailModal.querySelector('[data-detail-counts]');
         const detailShops = detailModal.querySelector('[data-detail-shops]');
-        document.querySelectorAll('[data-category-detail]').forEach((button) => {
-            button.addEventListener('click', () => {
-                const row = JSON.parse(button.dataset.categoryDetail);
-                detailName.textContent = row.name;
-                const itemWord = row.items === 1 ? 'item' : 'items';
-                const storeWord = row.stores === 1 ? 'store' : 'stores';
-                detailCounts.textContent = row.items + ' catalogue ' + itemWord + ' · ' + row.stores + ' connected ' + storeWord + '.';
-                detailShops.innerHTML = '';
-                if (row.shops && row.shops.length > 0) {
-                    row.shops.forEach((shop) => {
-                        const li = document.createElement('li');
-                        const a = document.createElement('a');
-                        a.href = shop.url;
-                        a.textContent = shop.name;
-                        li.appendChild(a);
-                        detailShops.appendChild(li);
-                    });
-                    if (row.stores > row.shops.length) {
-                        const li = document.createElement('li');
-                        li.className = 'muted';
-                        li.textContent = '…and ' + (row.stores - row.shops.length) + ' more';
-                        detailShops.appendChild(li);
-                    }
+        onCatalogueAction('[data-category-detail]', (button) => {
+            const row = JSON.parse(button.dataset.categoryDetail);
+            detailName.textContent = row.name;
+            const itemWord = row.items === 1 ? 'item' : 'items';
+            const storeWord = row.stores === 1 ? 'store' : 'stores';
+            detailCounts.textContent = row.items + ' catalogue ' + itemWord + ' · ' + row.stores + ' connected ' + storeWord + '.';
+            detailShops.innerHTML = '';
+            if (row.shops && row.shops.length > 0) {
+                row.shops.forEach((shop) => {
+                    const li = document.createElement('li');
+                    const a = document.createElement('a');
+                    a.href = shop.url;
+                    a.textContent = shop.name;
+                    li.appendChild(a);
+                    detailShops.appendChild(li);
+                });
+                if (row.stores > row.shops.length) {
+                    const li = document.createElement('li');
+                    li.className = 'muted';
+                    li.textContent = '…and ' + (row.stores - row.shops.length) + ' more';
+                    detailShops.appendChild(li);
                 }
-                detailModal.hidden = false;
-            });
+            }
+            detailModal.hidden = false;
         });
         detailModal.querySelectorAll('[data-close]').forEach((btn) => btn.addEventListener('click', () => closeModal(detailModal)));
 

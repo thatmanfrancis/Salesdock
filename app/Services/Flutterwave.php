@@ -171,8 +171,19 @@ class Flutterwave implements PaymentGateway
         ];
 
         $subaccountId = trim((string) ($payment['subaccountId'] ?? ''));
+        if ($payment['cardOnly'] ?? false) {
+            $payload['payment_options'] = 'card';
+        }
         if ($subaccountId !== '') {
             $payload['subaccounts'] = [['id' => $subaccountId]];
+            if (array_key_exists('platformFee', $payment)) {
+                $fee = round((float) $payment['platformFee'], 2);
+                if ($fee < 0 || $fee > $payload['amount']) {
+                    throw new RuntimeException('The platform fee must be between zero and the payment amount.');
+                }
+                $payload['subaccounts'][0]['transaction_charge_type'] = 'flat';
+                $payload['subaccounts'][0]['transaction_charge'] = $fee;
+            }
         }
 
         $body = $this->request('post', '/payments', $payload);
@@ -183,6 +194,15 @@ class Flutterwave implements PaymentGateway
         }
 
         return $link;
+    }
+
+    public function chargeAuthorization(array $payment): void
+    {
+        $this->request('post', '/tokenized-charges', [
+            'token' => $payment['token'], 'email' => $payment['email'],
+            'amount' => round($payment['amount'], 2), 'currency' => 'NGN', 'country' => 'NG',
+            'tx_ref' => $payment['reference'], 'narration' => 'SalesDock software subscription renewal',
+        ]);
     }
 
     public function verifyTransaction(string $transactionId): array
@@ -242,6 +262,13 @@ class Flutterwave implements PaymentGateway
             'status' => (string) ($data['status'] ?? ''),
             'created_at' => isset($data['created_at']) ? (string) $data['created_at'] : null,
             'gateway' => 'FLUTTERWAVE',
+            'recurring' => ($data['payment_type'] ?? null) === 'card' ? [
+                'token' => (string) ($data['card']['token'] ?? ''),
+                'email' => (string) ($data['customer']['email'] ?? ''),
+                'last4' => (string) ($data['card']['last_4digits'] ?? ''),
+                'brand' => (string) ($data['card']['type'] ?? ''),
+                'expires' => (string) ($data['card']['expiry'] ?? ''),
+            ] : null,
             'method' => match ($data['payment_type'] ?? null) {
                 'card' => 'CARD',
                 'banktransfer', 'bank_transfer', 'account' => 'TRANSFER',
@@ -283,18 +310,18 @@ class Flutterwave implements PaymentGateway
     {
         $secret = $this->secretKey();
         if (! $secret) {
-            throw new RuntimeException('Flutterwave is not configured. Add keys under Admin → Settings → Payments.');
+            throw new RuntimeException('Flutterwave is not configured. Add keys under Admin → Settings → Payments.', 503);
         }
 
         try {
             $response = Http::withToken($secret)->acceptJson()->timeout(20)->{$method}(self::BASE_URL.$path, $data);
         } catch (ConnectionException) {
-            throw new RuntimeException('Could not reach Flutterwave. Please try again in a moment.');
+            throw new RuntimeException('Could not reach Flutterwave. Please try again in a moment.', 503);
         }
 
         $body = $response->json() ?? [];
         if (! $response->successful() || ($body['status'] ?? '') !== 'success') {
-            throw new RuntimeException((string) ($body['message'] ?? 'Flutterwave request failed ('.$response->status().').'));
+            throw new RuntimeException((string) ($body['message'] ?? 'Flutterwave request failed ('.$response->status().').'), $response->status());
         }
 
         return $body;

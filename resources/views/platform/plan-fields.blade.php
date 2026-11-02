@@ -33,6 +33,22 @@
         <input type="number" name="maxProducts" value="{{ $products }}" min="0" max="999999" step="1" required>
     </label>
 </div>
+<fieldset>
+    <legend>Introductory pricing (optional)</legend>
+    <p>For shops making their first paid subscription purchase. Each price applies for the specified number of paid billing periods, then the regular price applies. Leave a price blank to disable its offer. Existing agreed schedules remain unchanged.</p>
+    @foreach (['MONTHLY' => 'Monthly', 'QUARTERLY' => 'Quarterly', 'ANNUALLY' => 'Annual'] as $offerCycle => $offerLabel)
+        <div class="ui-modal-grid">
+            <label>
+                <span>{{ $offerLabel }} introductory price (NGN)</span>
+                <input type="number" name="introductoryPricing[{{ $offerCycle }}][amount]" value="{{ $introductoryPricing[$offerCycle]['amount'] ?? '' }}" min="0.01" max="99999999.99" step="0.01">
+            </label>
+            <label>
+                <span>{{ $offerLabel }} discounted billing periods</span>
+                <input type="number" name="introductoryPricing[{{ $offerCycle }}][periods]" value="{{ $introductoryPricing[$offerCycle]['periods'] ?? 1 }}" min="1" max="12" step="1">
+            </label>
+        </div>
+    @endforeach
+</fieldset>
 <div class="feature-picks">
     @foreach ($choices as $feature)
         <label>

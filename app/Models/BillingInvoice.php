@@ -37,6 +37,7 @@ class BillingInvoice extends Model
     protected function casts(): array
     {
         return [
+            'billingMetadata' => 'array',
             'amount' => 'decimal:2',
             'periodStart' => 'datetime',
             'periodEnd' => 'datetime',

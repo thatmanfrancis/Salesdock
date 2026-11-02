@@ -5,25 +5,28 @@ namespace App\Http\Controllers\Billing;
 use App\Contracts\PaymentGateway;
 use App\Http\Controllers\Controller;
 use App\Models\BillingInvoice;
-use App\Models\Tenant;
 use App\Models\WebhookEvent;
 use App\Services\BillingService;
 use App\Services\PaymentManager;
+use App\Services\RecurringBilling;
 use App\Services\SaleRecorder;
 use App\Support\PlanTour;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 class PaymentController extends Controller
 {
     public function checkout(string $invoice, PaymentManager $payments)
     {
         $record = BillingInvoice::query()->where('invoiceNumber', $invoice)->where('status', 'PENDING')->firstOrFail();
-        $gateway = $payments->active();
+        $gateway = isset($record->billingMetadata['provider']) ? $payments->driver($record->billingMetadata['provider']) : $payments->active();
 
         return view('billing.pay', [
             'invoice' => $record,
+            'canAutoRenew' => app(RecurringBilling::class)->canAuthorize(Auth::user(), $record->tenantId) && app(RecurringBilling::class)->supportsCycle($record->billingCycle),
             'ready' => $gateway->ready(),
             'gatewayLabel' => $gateway->label(),
         ]);
@@ -33,32 +36,27 @@ class PaymentController extends Controller
     {
         abort_unless($invoice->tenantId === $this->user()->tenantId, 404);
         abort_unless($invoice->status === 'PENDING', 404);
-        $gateway = $payments->active();
+        $gateway = isset($invoice->billingMetadata['provider']) ? $payments->driver($invoice->billingMetadata['provider']) : $payments->active();
 
         return view('billing.pay', [
             'invoice' => $invoice,
+            'canAutoRenew' => app(RecurringBilling::class)->canAuthorize(Auth::user(), $invoice->tenantId) && app(RecurringBilling::class)->supportsCycle($invoice->billingCycle),
             'ready' => $gateway->ready(),
             'gatewayLabel' => $gateway->label(),
         ]);
     }
 
-    public function start(string $invoice, PaymentManager $payments)
+    public function start(Request $request, string $invoice, PaymentManager $payments)
     {
         $record = BillingInvoice::query()->where('invoiceNumber', $invoice)->where('status', 'PENDING')->firstOrFail();
-        $tenant = Tenant::query()->findOrFail($record->tenantId);
-        $user = Auth::user();
         $gateway = $payments->active();
 
         try {
-            $link = $gateway->checkoutLink([
-                'reference' => $record->invoiceNumber,
-                'amount' => (float) $record->amount,
-                'email' => $user?->tenantId === $tenant->id ? $user->email : $tenant->email,
-                'name' => $tenant->name,
-                'redirect' => route('billing.verify', ['ref' => $record->invoiceNumber]),
-                'title' => 'SalesDock',
-                'description' => 'Subscription '.$record->invoiceNumber,
-            ]);
+            $link = app(RecurringBilling::class)->startCheckout($record, $request);
+        } catch (ValidationException $exception) {
+            throw $exception;
+        } catch (HttpExceptionInterface $exception) {
+            throw $exception;
         } catch (\Throwable $e) {
             Log::warning($gateway->label().' checkout link failed', ['invoice' => $record->invoiceNumber, 'error' => $e->getMessage()]);
 
@@ -73,7 +71,9 @@ class PaymentController extends Controller
         $ref = (string) $request->query('ref', $request->query('reference', ''));
         abort_unless($ref !== '', 404);
         $back = Auth::check() ? 'billing' : 'login';
-        $gateway = $payments->active();
+        $record = BillingInvoice::query()->where('invoiceNumber', $ref)->first();
+        $gateway = ! empty($record?->billingMetadata['provider'])
+            ? $payments->driver($record->billingMetadata['provider']) : $payments->active();
 
         if (in_array($request->query('status'), ['cancelled', 'failed'], true)) {
             $cancelled = $request->query('status') === 'cancelled';

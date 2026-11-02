@@ -69,6 +69,7 @@ class PosPayments
                 'title' => 'SalesDock',
                 'description' => 'In-store sale '.$order->paymentRef,
                 'subaccountId' => $store->{$gateway->subaccountColumn()},
+                'platformFee' => 0.0,
             ]);
         } catch (\Throwable $exception) {
             $this->updateAttempt($transaction, ['checkoutState' => 'UNCERTAIN', 'lastError' => $exception->getMessage()]);

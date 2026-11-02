@@ -194,6 +194,7 @@
                                 <button type="button" class="ghost" data-close aria-label="Close">✕</button>
                             </div>
                             @include('platform.plan-fields', [
+                                'introductoryPricing' => $editing ? old('introductoryPricing', $plan->introductoryPricing ?? []) : ($plan->introductoryPricing ?? []),
                                 'name' => $editing ? old('name', $plan->name) : $plan->name,
                                 'tier' => $editing ? old('tier', $plan->tier) : $plan->tier,
                                 'description' => $editing ? old('description', $plan->description) : $plan->description,
@@ -228,6 +229,7 @@
                 <button type="button" class="ghost" data-close aria-label="Close">✕</button>
             </div>
             @include('platform.plan-fields', [
+                'introductoryPricing' => $creating ? old('introductoryPricing', []) : [],
                 'name' => $creating ? old('name') : '',
                 'tier' => $creating ? old('tier', 'STARTER') : 'STARTER',
                 'description' => $creating ? old('description') : '',

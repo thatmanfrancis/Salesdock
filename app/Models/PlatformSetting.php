@@ -115,6 +115,7 @@ class PlatformSetting extends Model
         return [
             'provider' => $provider,
             'platform_split' => $split,
+            'recurring_enabled' => (bool) ($saved['recurring_enabled'] ?? false),
             'flutterwave' => [
                 'public_key' => self::credential($fw['public_key'] ?? null, (string) config('services.flutterwave.public_key')),
                 'secret_key' => self::credential($fw['secret_key'] ?? null, (string) config('services.flutterwave.secret_key')),
@@ -144,6 +145,7 @@ class PlatformSetting extends Model
         return [
             'provider' => $payment['provider'],
             'platform_split_percent' => round($payment['platform_split'] * 100, 3),
+            'recurring_enabled' => $payment['recurring_enabled'],
             'flutterwave' => [
                 'public_key' => $payment['flutterwave']['public_key'],
                 'secret_key_hint' => self::maskSecret($payment['flutterwave']['secret_key']),
@@ -186,6 +188,7 @@ class PlatformSetting extends Model
         static::write('payment', [
             'provider' => $provider,
             'platform_split' => $split,
+            'recurring_enabled' => (bool) ($input['recurring_enabled'] ?? $current['recurring_enabled'] ?? false),
             'flutterwave' => [
                 'public_key' => self::keepOrReplace($fwIn['public_key'] ?? null, (string) ($currentFw['public_key'] ?? '')),
                 'secret_key' => self::keepOrReplace($fwIn['secret_key'] ?? null, (string) ($currentFw['secret_key'] ?? '')),

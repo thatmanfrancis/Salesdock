@@ -6,6 +6,7 @@ use App\Models\PlatformSetting;
 use App\Services\PaymentManager;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use PHPUnit\Framework\Attributes\TestWith;
 use Tests\TestCase;
 
 class PaymentManagerTest extends TestCase
@@ -47,5 +48,40 @@ class PaymentManagerTest extends TestCase
 
         $this->assertSame('flutterwave', $manager->driver('flutterwave')->name());
         $this->assertSame('flutterwaveSubaccountId', $manager->driver('flutterwave')->subaccountColumn());
+    }
+
+    #[TestWith(['flutterwave'])]
+    #[TestWith(['paystack'])]
+    public function test_saved_provider_is_used_when_both_providers_have_credentials(string $provider): void
+    {
+        config(['services.payments.provider' => $provider === 'paystack' ? 'flutterwave' : 'paystack']);
+        PlatformSetting::writePayment([
+            'provider' => $provider,
+            'platform_split' => 0.015,
+            'flutterwave' => ['secret_key' => 'FLWSECK_TEST-example-X'],
+            'paystack' => ['secret_key' => 'sk_test_example'],
+        ]);
+
+        $manager = app(PaymentManager::class);
+
+        $this->assertTrue($manager->driver('flutterwave')->ready());
+        $this->assertTrue($manager->driver('paystack')->ready());
+        $this->assertSame($provider, $manager->active()->name());
+    }
+
+    public function test_missing_selected_credentials_does_not_activate_the_other_provider(): void
+    {
+        config(['services.paystack.secret_key' => '']);
+        PlatformSetting::writePayment([
+            'provider' => 'paystack',
+            'platform_split' => 0.015,
+            'flutterwave' => ['secret_key' => 'FLWSECK_TEST-example-X'],
+        ]);
+
+        $manager = app(PaymentManager::class);
+
+        $this->assertTrue($manager->driver('flutterwave')->ready());
+        $this->assertSame('paystack', $manager->active()->name());
+        $this->assertFalse($manager->active()->ready());
     }
 }

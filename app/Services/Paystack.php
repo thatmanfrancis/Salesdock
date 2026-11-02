@@ -165,8 +165,18 @@ class Paystack implements PaymentGateway
         ];
 
         $subaccountId = trim((string) ($payment['subaccountId'] ?? ''));
+        if ($payment['cardOnly'] ?? false) {
+            $payload['channels'] = ['card'];
+        }
         if ($subaccountId !== '') {
             $payload['subaccount'] = $subaccountId;
+            if (array_key_exists('platformFee', $payment)) {
+                $fee = (int) round((float) $payment['platformFee'] * 100);
+                if ($fee < 0 || $fee > $payload['amount']) {
+                    throw new RuntimeException('The platform fee must be between zero and the payment amount.');
+                }
+                $payload['transaction_charge'] = $fee;
+            }
         }
 
         $body = $this->request('post', '/transaction/initialize', $payload);
@@ -176,6 +186,15 @@ class Paystack implements PaymentGateway
         }
 
         return $link;
+    }
+
+    public function chargeAuthorization(array $payment): void
+    {
+        $this->request('post', '/transaction/charge_authorization', [
+            'authorization_code' => $payment['token'], 'email' => $payment['email'],
+            'amount' => (int) round($payment['amount'] * 100),
+            'currency' => 'NGN', 'reference' => $payment['reference'],
+        ]);
     }
 
     public function verifyTransaction(string $transactionId): array
@@ -240,6 +259,13 @@ class Paystack implements PaymentGateway
             'status' => (string) ($data['status'] ?? ''),
             'created_at' => isset($data['paid_at']) ? (string) $data['paid_at'] : (isset($data['created_at']) ? (string) $data['created_at'] : null),
             'gateway' => 'PAYSTACK',
+            'recurring' => ($data['channel'] ?? null) === 'card' && ($data['authorization']['reusable'] ?? false) === true ? [
+                'token' => (string) ($data['authorization']['authorization_code'] ?? ''),
+                'email' => (string) ($data['customer']['email'] ?? ''),
+                'last4' => (string) ($data['authorization']['last4'] ?? ''),
+                'brand' => (string) ($data['authorization']['card_type'] ?? ''),
+                'expires' => ($data['authorization']['exp_month'] ?? '').'/'.($data['authorization']['exp_year'] ?? ''),
+            ] : null,
             'method' => match ($data['channel'] ?? null) {
                 'card' => 'CARD',
                 'bank_transfer', 'bank', 'dedicated_nuban' => 'TRANSFER',
@@ -281,7 +307,7 @@ class Paystack implements PaymentGateway
     {
         $secret = $this->secretKey();
         if (! $secret) {
-            throw new RuntimeException('Paystack is not configured. Add keys under Admin → Settings → Payments.');
+            throw new RuntimeException('Paystack is not configured. Add keys under Admin → Settings → Payments.', 503);
         }
 
         try {
@@ -290,12 +316,12 @@ class Paystack implements PaymentGateway
                 ? $pending->get(self::BASE_URL.$path, $data)
                 : $pending->{$method}(self::BASE_URL.$path, $data);
         } catch (ConnectionException) {
-            throw new RuntimeException('Could not reach Paystack. Please try again in a moment.');
+            throw new RuntimeException('Could not reach Paystack. Please try again in a moment.', 503);
         }
 
         $body = $response->json() ?? [];
         if (! $response->successful() || ($body['status'] ?? false) !== true) {
-            throw new RuntimeException((string) ($body['message'] ?? 'Paystack request failed ('.$response->status().').'));
+            throw new RuntimeException((string) ($body['message'] ?? 'Paystack request failed ('.$response->status().').'), $response->status());
         }
 
         return $body;

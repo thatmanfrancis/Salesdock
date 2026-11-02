@@ -18,56 +18,45 @@ class BillingService
 {
     public function activatePaid(BillingInvoice $invoice, array $payment): Subscription
     {
-        $tenant = Tenant::query()->findOrFail($invoice->tenantId);
-        $paidAt = isset($payment['created_at']) ? now()->parse($payment['created_at']) : now();
-        $start = $invoice->periodStart ?? $paidAt;
-        $end = $invoice->periodEnd ?? $start->copy()->addMonth();
-        $grace = $end->copy()->addDays(7);
-        $planId = $invoice->gatewayRef && ! str_starts_with((string) $invoice->gatewayRef, 'chg_')
-            ? $invoice->gatewayRef
-            : Subscription::query()->where('tenantId', $tenant->id)->value('planId');
+        return DB::transaction(function () use ($invoice, $payment): Subscription {
+            $invoice = BillingInvoice::query()->lockForUpdate()->findOrFail($invoice->id);
+            $existing = Subscription::query()->where('tenantId', $invoice->tenantId)->lockForUpdate()->first();
+            if ($invoice->status === 'PAID') {
+                return $existing ?? Subscription::query()->findOrFail($invoice->subscriptionId);
+            }
+            $tenant = Tenant::query()->findOrFail($invoice->tenantId);
+            $paidAt = isset($payment['created_at']) ? now()->parse($payment['created_at']) : now();
+            $start = $invoice->periodStart ?? $paidAt;
+            $end = $invoice->periodEnd ?? RecurringBilling::periodEnd($start, $invoice->billingCycle);
+            $planId = $invoice->billingMetadata['planId'] ?? $invoice->gatewayRef;
+            if (! $planId || str_starts_with((string) $planId, 'chg_')) {
+                $planId = $existing?->planId;
+            }
+            $base = $invoice->billingMetadata['baseSubscription'] ?? null;
+            $stale = $existing && ($base
+                ? $base !== [$existing->planId, $existing->currentPeriodStart?->toISOString(), $existing->currentPeriodEnd?->toISOString()]
+                : $existing->currentPeriodEnd?->gt($end));
+            $subscription = $stale ? $existing : Subscription::query()->updateOrCreate(
+                ['tenantId' => $tenant->id],
+                ['planId' => $planId, 'status' => 'ACTIVE', 'billingCycle' => $invoice->billingCycle,
+                    'currentPeriodStart' => $start, 'currentPeriodEnd' => $end, 'gracePeriodDays' => 7,
+                    'gracePeriodEndsAt' => $end->copy()->addDays(7), 'lastRenewedAt' => $paidAt,
+                    'nextBillingDate' => $end, 'cancelAtPeriodEnd' => false, 'cancelledAt' => null, 'cancellationReason' => null]
+            );
+            $invoice->forceFill(['subscriptionId' => $subscription->id, 'status' => 'PAID',
+                'gateway' => strtoupper((string) ($payment['gateway'] ?? 'CARD')),
+                'gatewayRef' => (string) ($payment['id'] ?? $payment['tx_ref'] ?? $invoice->invoiceNumber), 'paidAt' => $paidAt])->save();
+            $this->markShopPaid($tenant);
+            if (! $stale) {
+                app(RecurringBilling::class)->recordPayment($invoice, $subscription, $payment);
+            }
+            Notification::query()->create(['tenantId' => $tenant->id, 'type' => 'SUBSCRIPTION_RENEWED',
+                'title' => $stale ? 'Subscription payment received for review' : 'Subscription Activated',
+                'message' => $stale ? 'A payment arrived for an older billing period. Your current plan is unchanged; contact support to review it.'
+                    : 'Your SalesDock subscription is active. Next billing date: '.$end->copy()->timezone('Africa/Lagos')->format('d M Y').'.', 'createdAt' => now()]);
 
-        $subscription = Subscription::query()->updateOrCreate(
-            ['tenantId' => $tenant->id],
-            [
-                'planId' => $planId,
-                'status' => 'ACTIVE',
-                'billingCycle' => $invoice->billingCycle,
-                'currentPeriodStart' => $start,
-                'currentPeriodEnd' => $end,
-                'gracePeriodDays' => 7,
-                'gracePeriodEndsAt' => $grace,
-                'lastRenewedAt' => $paidAt,
-                'nextBillingDate' => $end,
-                'cancelAtPeriodEnd' => false,
-                'cancelledAt' => null,
-                'cancellationReason' => null,
-            ]
-        );
-
-        $wasPaid = $invoice->status === 'PAID';
-        $invoice->update([
-            'subscriptionId' => $subscription->id,
-            'status' => 'PAID',
-            'gateway' => strtoupper((string) ($payment['gateway'] ?? 'CARD')),
-            'gatewayRef' => (string) ($payment['id'] ?? $payment['tx_ref'] ?? $invoice->invoiceNumber),
-            'paidAt' => $paidAt,
-            'amount' => $payment['amount'] ?? $invoice->amount,
-        ]);
-
-        $this->markShopPaid($tenant);
-
-        if (! $wasPaid) {
-            Notification::query()->create([
-                'tenantId' => $tenant->id,
-                'type' => 'SUBSCRIPTION_RENEWED',
-                'title' => 'Subscription Activated',
-                'message' => 'Your SalesDock subscription is active. Next billing date: '.$end->copy()->timezone('Africa/Lagos')->format('d M Y').'.',
-                'createdAt' => now(),
-            ]);
-        }
-
-        return $subscription;
+            return $subscription;
+        });
     }
 
     private function markShopPaid(Tenant $tenant): void
@@ -94,10 +83,15 @@ class BillingService
 
         $invoice = BillingInvoice::query()->where('invoiceNumber', $reference)->first();
         if ($invoice) {
-            if ($invoice->status !== 'PAID' && ! $gateway->confirms($payment, $reference, (float) $invoice->amount)) {
-                Log::warning($gateway->label().' payment did not match invoice', ['invoice' => $reference, 'paid' => $payment['amount'] ?? null, 'status' => $payment['status'] ?? null]);
-
+            $metadata = $invoice->billingMetadata ?? [];
+            if (! $gateway->confirms($payment, $reference, (float) $invoice->amount)
+                || (($metadata['provider'] ?? $gateway->name()) !== $gateway->name())
+                || (($metadata['cardOnly'] ?? false) && (($payment['method'] ?? null) !== 'CARD'
+                    || abs((float) ($payment['amount'] ?? 0) - (float) $invoice->amount) > 0.009))) {
                 return null;
+            }
+            if ($invoice->status === 'PAID') {
+                return $invoice->gatewayRef === (string) ($payment['id'] ?? '') ? 'invoice' : null;
             }
             $this->activatePaid($invoice, $payment);
 

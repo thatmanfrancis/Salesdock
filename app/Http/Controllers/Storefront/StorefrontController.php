@@ -369,6 +369,7 @@ class StorefrontController extends Controller
                 'title' => $config->storeName,
                 'description' => 'Order '.$order->paymentRef,
                 'subaccountId' => $config->{$column},
+                'platformFee' => (float) $order->serviceCharge,
             ]);
         } catch (\Throwable $e) {
             Log::warning($gateway->label().' checkout link failed', ['order' => $order->paymentRef, 'error' => $e->getMessage()]);

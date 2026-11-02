@@ -156,11 +156,7 @@ class TenantProvisioner
 
     public function periodEnd(Carbon $start, string $cycle): Carbon
     {
-        return match ($cycle) {
-            'QUARTERLY' => $start->copy()->addMonths(3),
-            'ANNUALLY' => $start->copy()->addYear(),
-            default => $start->copy()->addMonth(),
-        };
+        return RecurringBilling::periodEnd($start, $cycle);
     }
 
     public function openInvoice(string $tenantId): ?BillingInvoice
@@ -168,6 +164,7 @@ class TenantProvisioner
         return BillingInvoice::query()
             ->where('tenantId', $tenantId)
             ->where('status', 'PENDING')
+            ->whereNull('billingMetadata')
             ->latest('createdAt')
             ->first();
     }

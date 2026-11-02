@@ -126,6 +126,7 @@
                     <a href="{{ route('help') }}">Help &amp; contact</a>
                     <a href="{{ route('privacy') }}">Privacy</a>
                     <a href="{{ route('terms') }}">Terms</a>
+                    <a href="{{ route('recurring.terms') }}">Recurring card authorisation</a>
                     <a href="{{ route('login') }}">Log in</a>
                 </nav>
             </div>

@@ -36,6 +36,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class PlatformController extends MerchantController
 {
@@ -677,6 +678,10 @@ class PlatformController extends MerchantController
             'monthlyPrice' => ['required', 'numeric', 'min:0', 'max:99999999.99'],
             'quarterlyPrice' => ['required', 'numeric', 'min:0', 'max:99999999.99'],
             'annualPrice' => ['required', 'numeric', 'min:0', 'max:99999999.99'],
+            'introductoryPricing' => ['nullable', 'array:MONTHLY,QUARTERLY,ANNUALLY'],
+            'introductoryPricing.*' => ['array:amount,periods'],
+            'introductoryPricing.*.amount' => ['nullable', 'numeric', 'min:0.01', 'max:99999999.99', 'decimal:0,2'],
+            'introductoryPricing.*.periods' => ['nullable', 'integer', 'min:1', 'max:12'],
             'maxBranches' => ['required', 'integer', 'min:0', 'max:999999'],
             'maxUsers' => ['required', 'integer', 'min:0', 'max:999999'],
             'maxProducts' => ['required', 'integer', 'min:0', 'max:999999'],
@@ -687,6 +692,18 @@ class PlatformController extends MerchantController
         ]);
         $picked = array_values(array_intersect($data['features'] ?? [], $known));
         $description = trim((string) ($data['description'] ?? ''));
+        $offers = [];
+        foreach (['MONTHLY' => 'monthlyPrice', 'QUARTERLY' => 'quarterlyPrice', 'ANNUALLY' => 'annualPrice'] as $cycle => $priceField) {
+            $offer = $data['introductoryPricing'][$cycle] ?? [];
+            if (($offer['amount'] ?? null) !== null) {
+                if (empty($offer['periods']) || (float) $offer['amount'] >= (float) $data[$priceField]) {
+                    throw ValidationException::withMessages([
+                        'introductoryPricing.'.$cycle.'.amount' => 'Set 1–12 discounted billing periods and an introductory price below the regular price.',
+                    ]);
+                }
+                $offers[$cycle] = ['amount' => number_format((float) $offer['amount'], 2, '.', ''), 'periods' => (int) $offer['periods']];
+            }
+        }
 
         return [
             'name' => trim($data['name']),
@@ -695,6 +712,7 @@ class PlatformController extends MerchantController
             'monthlyPrice' => $data['monthlyPrice'],
             'quarterlyPrice' => $data['quarterlyPrice'],
             'annualPrice' => $data['annualPrice'],
+            'introductoryPricing' => $request->has('introductoryPricing') ? $offers : $plan?->introductoryPricing,
             'maxBranches' => $data['maxBranches'],
             'maxUsers' => $data['maxUsers'],
             'maxProducts' => $data['maxProducts'],
@@ -1216,13 +1234,21 @@ class PlatformController extends MerchantController
         if ($q !== '') {
             $like = '%'.addcslashes($q, '%_\\').'%';
             $query->where(function ($row) use ($like) {
-                $row->where('name', 'ilike', $like)
-                    ->orWhere('brand', 'ilike', $like)
-                    ->orWhere('barcode', 'ilike', $like);
+                $row->whereLike('name', $like)
+                    ->orWhereLike('sku', $like)
+                    ->orWhereLike('brand', $like)
+                    ->orWhereLike('barcode', $like)
+                    ->orWhereLike('category', $like);
             });
         }
         if ($category !== '') {
             $query->where('category', $category);
+        }
+        $visibleCategoryRows = $categoryRows;
+        if ($q !== '') {
+            $matchingCategories = (clone $query)->reorder()->distinct()->pluck('category')->all();
+            $visibleCategoryRows = array_values(array_filter($categoryRows, fn (array $row): bool => mb_stripos($row['name'], $q) !== false
+                || in_array($row['name'], $matchingCategories, true)));
         }
         [$items, $total, $page, $pages] = $this->pageOf($query, $request);
 
@@ -1231,7 +1257,7 @@ class PlatformController extends MerchantController
             'q' => $q,
             'category' => $category,
             'categories' => ['' => 'All'] + $categories->all(),
-            'categoryRows' => $categoryRows,
+            'categoryRows' => $visibleCategoryRows,
             'filtered' => $q !== '' || $category !== '',
             'total' => $total,
             'page' => $page,
@@ -1625,6 +1651,7 @@ class PlatformController extends MerchantController
         $data = $request->validate([
             'provider' => ['required', 'in:flutterwave,paystack'],
             'platform_split_percent' => ['required', 'numeric', 'min:0', 'max:50'],
+            'recurring_enabled' => ['nullable', 'boolean'],
             'flutterwave_public_key' => ['nullable', 'string', 'max:255'],
             'flutterwave_secret_key' => ['nullable', 'string', 'max:255'],
             'flutterwave_secret_hash' => ['nullable', 'string', 'max:255'],
@@ -1635,6 +1662,7 @@ class PlatformController extends MerchantController
         PlatformSetting::writePayment([
             'provider' => $data['provider'],
             'platform_split' => ((float) $data['platform_split_percent']) / 100,
+            'recurring_enabled' => $request->boolean('recurring_enabled'),
             'flutterwave' => [
                 'public_key' => $data['flutterwave_public_key'] ?? null,
                 'secret_key' => $data['flutterwave_secret_key'] ?? null,

@@ -81,6 +81,33 @@
             @endif
         </section>
 
+        @if ($subscription)
+            <section class="card">
+                <h2>Automatic renewal</h2>
+                @if ($subscription->autoRenew)
+                    <p>Enabled: ₦{{ number_format((float) $subscription->recurringAmount, 2) }} {{ strtolower($cycles[$subscription->billingCycle] ?? $subscription->billingCycle) }} through {{ ucfirst($subscription->recurringProvider) }}. Next payment: {{ $subscription->currentPeriodEnd?->timezone('Africa/Lagos')->format('d M Y') }}.</p>
+                    <p>{{ $subscription->recurringConsent['card']['brand'] ?? 'Card' }} ending {{ $subscription->recurringConsent['card']['last4'] ?? '—' }}. Only a discount expiry disclosed in your authorisation can change the amount automatically.</p>
+                    @if ($subscription->billingPricing)
+                        <p>Upcoming schedule: {{ \App\Services\SubscriptionPricing::description($subscription->billingPricing, false) }}</p>
+                    @endif
+                @else
+                    <p>Automatic renewal is off. Renew by making a one-time card payment, or opt in when you next pay while signed in as the shop owner.</p>
+                @endif
+                @if (auth()->user()?->role?->name === 'Owner')
+                        <form method="post" action="{{ route('billing.auto-renew.destroy') }}">
+                            @csrf
+                            @method('DELETE')
+                            <button type="submit">Turn off automatic renewal</button>
+                        </form>
+                        <p>This also withdraws a pending automatic-renewal request. Cancellation stops future submissions and keeps your paid access until the period ends. A charge already submitted may still complete.</p>
+                    @if (! empty($subscription->recurringConsent['invoiceId']))
+                        <p><a href="{{ route('billing.authorization', $subscription->recurringConsent['invoiceId']) }}">View or print your card authorisation record</a></p>
+                    @endif
+                @endif
+                <p><a href="{{ route('recurring.terms') }}">Recurring card payment terms</a></p>
+            </section>
+        @endif
+
         <div class="cycle-pick">
             @foreach ($cycles as $key => $label)
                 <a href="{{ route('billing', ['cycle' => $key]) }}" @class(['on' => $cycle === $key])>{{ $label }}</a>
@@ -112,6 +139,9 @@
                         @endif
                     </div>
                     <p class="price">{{ $price($plan) }} <span>{{ $suffix[$cycle] }}</span></p>
+                    @if (($introductoryEligible ?? false) && isset($plan->introductoryPricing[$cycle]))
+                        <p>Introductory offer: {{ $money($plan->introductoryPricing[$cycle]['amount']) }} per billing period for {{ $plan->introductoryPricing[$cycle]['periods'] }} paid period(s), then {{ $price($plan) }} {{ $suffix[$cycle] }}.</p>
+                    @endif
                     <p class="limits">{{ $slot($plan->maxUsers) }} users, {{ $slot($plan->maxBranches) }} {{ (int) $plan->maxBranches === 1 ? 'branch' : 'branches' }}, {{ $slot($plan->maxProducts) }} products</p>
                     @if ($features($plan) !== [])
                         <ul>
@@ -120,7 +150,7 @@
                             @endforeach
                         </ul>
                     @endif
-                    @if ($current)
+                    @if ($current && $subscription->status === 'ACTIVE')
                         <p class="current-label">Current plan</p>
                     @elseif ($canChange)
                         <form method="post" action="{{ route('billing.choose') }}">

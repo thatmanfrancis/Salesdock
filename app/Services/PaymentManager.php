@@ -18,6 +18,11 @@ class PaymentManager
         return $this->driver(PlatformSetting::payment()['provider']);
     }
 
+    public function recurringEnabled(): bool
+    {
+        return PlatformSetting::payment()['recurring_enabled'] && $this->active()->ready();
+    }
+
     public function driver(string $name): PaymentGateway
     {
         return match (strtolower(trim($name))) {

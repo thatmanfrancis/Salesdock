@@ -48,6 +48,7 @@ class Plan extends Model
             'maxUsers' => 'integer',
             'maxProducts' => 'integer',
             'features' => 'array',
+            'introductoryPricing' => 'array',
             'isActive' => 'boolean',
             'createdAt' => 'datetime',
             'updatedAt' => 'datetime',

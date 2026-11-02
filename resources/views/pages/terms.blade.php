@@ -25,7 +25,7 @@
 
 @section('content')
     <article class="legal">
-        <p class="updated">Last updated: 8 October 2026</p>
+        <p class="updated">Last updated: 2 November 2026</p>
 
         <nav class="toc">
             <strong>On this page</strong>
@@ -51,10 +51,13 @@
 
         <h2 id="billing">4. Plans and billing</h2>
         <ul>
-            <li>Plans are priced in Naira and billed monthly, quarterly or annually, in advance, through our payment partner Flutterwave.</li>
+            <li>Plans are priced in Naira and billed monthly, quarterly or annually in advance. Software subscription checkout is by card through the payment provider identified at checkout, currently Flutterwave or Paystack.</li>
             <li>The features and limits of each plan are shown on our website and on your Billing page.</li>
-            <li>At the end of each billing period you renew by paying from your Billing page. We will remind you by email and in the dashboard when payment is due.</li>
-            <li>We may change prices with at least 30 days' notice. New prices apply from your next billing period.</li>
+            <li>You may renew manually from Billing. Where available, the signed-in shop owner may separately opt in to automatic card renewal for the exact amount and interval shown at checkout. The option is unchecked by default. Connecting a merchant collection bank account does not authorise subscription debits.</li>
+            <li>Automatic renewal requires a reusable authorisation confirmed by the payment provider and is governed by our <a href="{{ route('recurring.terms') }}">Recurring Card Payment Authorisation</a>. We send a renewal reminder through the dashboard and attempt email delivery before automatic billing. We submit at most one automatic charge for a billing period and reconcile uncertain results before allowing another payment.</li>
+            <li>You can turn off automatic renewal in Billing at any time. This stops future submissions and preserves the paid period. A charge already submitted may still complete. An expired authorisation, provider change, unavailable recurring service or changed price may pause automatic renewal and require fresh approval.</li>
+            <li>An introductory offer specifies the discounted amount, how many paid billing periods it covers and the regular amount afterwards. Automatic-renewal approval covers only that disclosed schedule. Introductory offers apply to a shop's first paid subscription purchase and do not restart on a plan change. Other price changes receive at least 30 days' notice and require fresh authorisation before automatic collection.</li>
+            <li>A plan change starts a new paid billing period after successful payment. The full selected price is payable; unused time is not automatically prorated or credited. Opening checkout for a different plan or interval pauses the previous automatic renewal. Future automatic payments require approval of the new schedule.</li>
             <li>Payments are non-refundable except where the law requires otherwise or we agree in writing.</li>
         </ul>
 
@@ -76,7 +79,7 @@
         <p>The products, sales, customers and other records you enter belong to your business. You give us permission to store and process them only to provide SalesDock to you. Some records, such as expenses, can be exported from the dashboard, and you can ask us for a copy of your other records at any time. How we handle personal data is explained in our <a href="{{ route('privacy') }}">Privacy Policy</a>.</p>
 
         <h2 id="storefront">8. Storefront and payments</h2>
-        <p>If you use the online storefront you are the seller. You are responsible for your prices, product descriptions, delivery, returns and customer service. Payments taken through the storefront are handled by Flutterwave and are also subject to Flutterwave's terms.</p>
+        <p>If you use the online storefront you are the seller. You are responsible for your prices, product descriptions, delivery, returns and customer service. Payments are handled by the provider identified at checkout and are also subject to that provider's terms. Any SalesDock storefront service fee is shown separately before payment and allocated to SalesDock; the remaining payment is allocated to the merchant, subject to gateway charges. Delivery is excluded from the SalesDock percentage-fee calculation. SalesDock does not deduct a separate software commission from verified in-store POS payments; gateway processing charges can still apply. Software subscription fees are separate from these customer payments.</p>
 
         <h2 id="availability">9. Availability and changes</h2>
         <p>We work hard to keep SalesDock available and the point of sale keeps recording sales offline when your internet drops. We may still need short maintenance windows, and we cannot promise the service will never be interrupted. We may improve, change or remove features over time; we will give notice before removing a feature that is part of a paid plan.</p>
@@ -85,7 +88,7 @@
         <p>SalesDock is a tool to help you run your shop; you remain responsible for your business decisions, records and tax filings. To the extent the law allows, we are not liable for indirect losses such as lost profits or lost business, and our total liability for any claim is limited to the fees you paid us in the 3 months before the claim. Nothing in these terms limits liability that cannot be limited by law.</p>
 
         <h2 id="closing">11. Closing your account</h2>
-        <p>You can stop using SalesDock at any time by not renewing your plan, or email us to delete your shop. A deleted shop can be restored within 30 days; after that it is permanently erased. We may close accounts that seriously or repeatedly break these terms.</p>
+        <p>You can stop renewing at any time. If you enabled automatic renewal, turn it off in Billing first or contact support for assistance. You may email us to delete your shop. Closed or deleted shops are not submitted for new automatic charges; a payment already submitted may still complete. A deleted shop can be restored within 30 days; after that it is permanently erased. We may close accounts that seriously or repeatedly break these terms.</p>
 
         <h2 id="general">12. General</h2>
         <p>These terms are governed by the laws of the Federal Republic of Nigeria, and the courts of Nigeria have jurisdiction over any dispute. We may update these terms; if the changes are significant we will tell shop owners at least 14 days before they take effect. Continuing to use SalesDock after that means you accept the new terms.</p>

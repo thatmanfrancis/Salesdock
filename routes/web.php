@@ -9,6 +9,7 @@ use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Auth\SelectPlanController;
 use App\Http\Controllers\Auth\VerifyEmailController;
 use App\Http\Controllers\Auth\WelcomeBackController;
+use App\Http\Controllers\Billing\AutoRenewController;
 use App\Http\Controllers\Billing\PaymentController;
 use App\Http\Controllers\Merchant\DeliveryController;
 use App\Http\Controllers\Merchant\DeskController;
@@ -38,6 +39,7 @@ Route::get('/', function () {
 Route::get('/help', fn () => view('pages.help', ['contact' => PlatformSetting::supportContact()]))->name('help');
 Route::get('/privacy', fn () => view('pages.privacy', ['contact' => PlatformSetting::supportContact()]))->name('privacy');
 Route::get('/terms', fn () => view('pages.terms', ['contact' => PlatformSetting::supportContact()]))->name('terms');
+Route::get('/recurring-card-authorisation', fn () => view('pages.recurring', ['contact' => PlatformSetting::supportContact()]))->name('recurring.terms');
 
 Route::middleware('guest')->group(function () {
     Route::get('/login', [LoginController::class, 'create'])->name('login');
@@ -200,6 +202,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/branches/{branch}/status', [OfficeController::class, 'toggleBranch'])->name('branches.status');
         Route::get('/settings', [OfficeController::class, 'settings'])->name('settings');
         Route::post('/settings', [OfficeController::class, 'updateSettings'])->name('settings.update');
+        Route::post('/settings/bank-account/resolve', [OfficeController::class, 'resolveBankAccount'])->middleware('throttle:10,1')->name('settings.bank-account.resolve');
         Route::post('/settings/delivery', [DeliveryController::class, 'updateAccount'])->name('settings.delivery');
         Route::post('/settings/delivery/test', [DeliveryController::class, 'testAccount'])->name('settings.delivery.test');
         Route::post('/orders/{order}/delivery/book', [DeliveryController::class, 'book'])->name('orders.delivery.book');
@@ -226,6 +229,8 @@ Route::middleware('auth')->group(function () {
         Route::get('/profile', [OfficeController::class, 'profile'])->name('profile');
         Route::post('/profile', [OfficeController::class, 'updateProfile'])->name('profile.update');
         Route::get('/billing', [OfficeController::class, 'billing'])->name('billing');
+        Route::delete('/billing/auto-renew', [AutoRenewController::class, 'destroy'])->middleware('throttle:auth-session')->name('billing.auto-renew.destroy');
+        Route::get('/billing/authorizations/{invoice}', [AutoRenewController::class, 'show'])->name('billing.authorization');
         Route::post('/billing', [OfficeController::class, 'choosePlan'])->name('billing.choose');
         Route::get('/billing/invoices/{invoice}/view', [OfficeController::class, 'invoice'])->name('billing.invoice');
         Route::get('/billing/invoices/{invoice}/document', [OfficeController::class, 'invoiceDocument'])->name('billing.invoice.document');

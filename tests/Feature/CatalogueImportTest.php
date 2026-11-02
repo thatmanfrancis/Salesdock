@@ -12,6 +12,7 @@ use App\Services\CatalogueImport;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use PHPUnit\Framework\Attributes\TestWith;
 use Tests\TestCase;
 
 class CatalogueImportTest extends TestCase
@@ -223,6 +224,61 @@ class CatalogueImportTest extends TestCase
             ->assertSee('SD-001')
             ->assertSee('data-sku="SD-001"', false)
             ->assertSee('name="sku"', false);
+    }
+
+    #[TestWith(['oAt miLK'])]
+    #[TestWith(['morning'])]
+    #[TestWith(['00123456789'])]
+    #[TestWith(['sd-321'])]
+    #[TestWith(['beverages'])]
+    public function test_admin_search_matches_product_fields_and_filters_category_overview(string $search): void
+    {
+        $admin = new User(['id' => 'admin', 'isSuperAdmin' => true, 'name' => 'Admin']);
+        $item = CatalogueProduct::query()->create(['name' => 'Oat Milk', 'sku' => 'SD-321', 'brand' => 'Morning', 'barcode' => '00123456789', 'category' => 'Beverages', 'createdBy' => 'admin']);
+        CatalogueProduct::query()->create(['name' => 'Bread', 'category' => 'Food', 'createdBy' => 'admin']);
+
+        $this->actingAs($admin)->get(route('admin.catalogue', ['q' => $search]))
+            ->assertOk()->assertViewHas('items', fn ($items): bool => $items->pluck('id')->all() === [$item->id])
+            ->assertViewHas('categoryRows', fn (array $rows): bool => array_column($rows, 'name') === ['Beverages'])
+            ->assertViewHas('categories', fn (array $categories): bool => isset($categories['Food'], $categories['Beverages']))
+            ->assertSee('aria-label="Search Category"', false)->assertSee('data-catalogue-results', false);
+    }
+
+    public function test_admin_search_and_category_filters_are_combined(): void
+    {
+        $admin = new User(['id' => 'admin', 'isSuperAdmin' => true]);
+        $match = CatalogueProduct::query()->create(['name' => 'Milk', 'brand' => 'Morning', 'category' => 'Beverages', 'createdBy' => 'admin']);
+        CatalogueProduct::query()->create(['name' => 'Bread', 'brand' => 'Morning', 'category' => 'Food', 'createdBy' => 'admin']);
+        CatalogueProduct::query()->create(['name' => 'Tea', 'category' => 'Beverages', 'createdBy' => 'admin']);
+
+        $this->actingAs($admin)->get(route('admin.catalogue', ['q' => 'Morning', 'category' => 'Beverages']))
+            ->assertOk()->assertViewHas('items', fn ($items): bool => $items->pluck('id')->all() === [$match->id])
+            ->assertViewHas('total', 1)->assertViewHas('category', 'Beverages');
+    }
+
+    public function test_admin_search_returns_empty_results_without_hiding_category_choices(): void
+    {
+        $admin = new User(['id' => 'admin', 'isSuperAdmin' => true]);
+        CatalogueProduct::query()->create(['name' => 'Milk', 'category' => 'Beverages', 'createdBy' => 'admin']);
+
+        $this->actingAs($admin)->get(route('admin.catalogue', ['q' => 'no-matching-product']))
+            ->assertOk()->assertViewHas('total', 0)->assertViewHas('categoryRows', [])
+            ->assertViewHas('categories', fn (array $categories): bool => isset($categories['Beverages']))
+            ->assertSee('No catalogue items.');
+    }
+
+    public function test_admin_filtered_pagination_keeps_search_and_category(): void
+    {
+        $admin = new User(['id' => 'admin', 'isSuperAdmin' => true]);
+        for ($index = 1; $index <= 21; $index++) {
+            CatalogueProduct::query()->create(['name' => sprintf('Milk %02d', $index), 'category' => 'Beverages', 'createdBy' => 'admin']);
+        }
+        CatalogueProduct::query()->create(['name' => 'Milk bread', 'category' => 'Food', 'createdBy' => 'admin']);
+
+        $this->actingAs($admin)->get(route('admin.catalogue', ['q' => 'Milk', 'category' => 'Beverages', 'page' => 2]))
+            ->assertOk()->assertViewHas('total', 21)->assertViewHas('page', 2)->assertViewHas('pages', 2)
+            ->assertViewHas('items', fn ($items): bool => $items->pluck('name')->all() === ['Milk 21'])
+            ->assertSee('q=Milk&amp;category=Beverages&amp;page=1', false);
     }
 
     public function test_admin_sku_conflict_is_rejected_without_changing_product_details(): void

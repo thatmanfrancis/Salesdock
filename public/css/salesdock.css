@@ -1422,6 +1422,26 @@ a { color: var(--green); }
 
 .app .row-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 
+.app .catalogue-category-actions {
+  display: inline-grid;
+  grid-template-columns: 2rem max-content max-content 2rem;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.app .catalogue-category-actions .catalogue-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+}
+
+.app .catalogue-category-actions button.detail { height: 2rem; }
+
 .app .row-actions button.quiet { color: #dc2626; background: #fef2f2; border: 1px solid #fecaca; }
 
 .app .row-actions button:disabled,

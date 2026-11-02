@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\PlatformSetting;
 use App\Models\StorefrontConfig;
 use App\Models\Tenant;
 use Illuminate\Support\Facades\Log;
@@ -16,6 +17,38 @@ class StorePayouts
 {
     public function __construct(private PaymentManager $payments) {}
 
+    public function resolveAccount(string $bankCode, string $accountNumber): string
+    {
+        $gateway = $this->payments->active();
+        if (! preg_match('/^[0-9]{10}$/', $accountNumber)) {
+            throw new RuntimeException('Enter a valid 10-digit Nigerian account number.');
+        }
+        if (! array_key_exists($bankCode, $gateway->banks())) {
+            throw new RuntimeException('Choose a bank from the list.');
+        }
+        if (! $gateway->ready()) {
+            throw new RuntimeException('Account verification is unavailable until SalesDock configures the payment provider.', 503);
+        }
+
+        try {
+            return $gateway->resolveAccount($bankCode, $accountNumber);
+        } catch (RuntimeException $exception) {
+            if (in_array($exception->getCode(), [401, 403], true)) {
+                throw new RuntimeException('The payment provider rejected SalesDock’s API credentials or account-verification permissions. Ask SalesDock support to check the provider settings.', 503, $exception);
+            }
+            if ($exception->getCode() >= 500 || $exception->getCode() === 429) {
+                throw new RuntimeException('Bank verification is temporarily unavailable. Please try again shortly. '.$exception->getMessage(), 503, $exception);
+            }
+            $configuration = PlatformSetting::payment();
+            $secret = $configuration[$gateway->name()]['secret_key'];
+            if (str_contains($secret, '_TEST') || str_starts_with($secret, 'sk_test_')) {
+                throw new RuntimeException('The payment provider is in test mode. Use a provider test bank account, or ask SalesDock to enable live payments before connecting a real account.', previous: $exception);
+            }
+
+            throw new RuntimeException('We could not verify this bank account. Check the selected bank and account number, then try again. '.$exception->getMessage(), previous: $exception);
+        }
+    }
+
     /**
      * Saves bank details on the storefront config and creates or updates the active gateway subaccount.
      *
@@ -25,35 +58,21 @@ class StorePayouts
     {
         $gateway = $this->payments->active();
         $bankCode = trim((string) $details['bankCode']);
-        $accountNumber = preg_replace('/\D+/', '', (string) $details['bankAccount']) ?? '';
-        if (strlen($accountNumber) < 10) {
+        $accountNumber = trim((string) $details['bankAccount']);
+        if (! preg_match('/^[0-9]{10}$/', $accountNumber)) {
             throw new RuntimeException('Enter a valid 10-digit Nigerian account number.');
         }
 
         $banks = $gateway->banks();
-        $bankName = $banks[$bankCode] ?? trim((string) ($details['bankName'] ?? ''));
+        $bankName = $banks[$bankCode] ?? '';
         if ($bankCode === '' || $bankName === '') {
             throw new RuntimeException('Choose a bank from the list.');
         }
 
-        $accountName = trim((string) ($details['accountName'] ?? ''));
-        if ($gateway->ready()) {
-            try {
-                $resolved = $gateway->resolveAccount($bankCode, $accountNumber);
-                $accountName = $resolved;
-            } catch (Throwable $e) {
-                if ($accountName === '') {
-                    throw $e;
-                }
-                Log::notice($gateway->label().' account resolve skipped; using typed name', ['tenant' => $tenant->id, 'error' => $e->getMessage()]);
-            }
-        }
-
-        if ($accountName === '') {
-            throw new RuntimeException('Enter the account name as it appears on the bank account.');
-        }
+        $accountName = $this->resolveAccount($bankCode, $accountNumber);
 
         $store->fill([
+            'storeName' => $store->storeName ?: $tenant->name,
             'bankCode' => $bankCode,
             'bankName' => $bankName,
             'bankAccount' => $accountNumber,

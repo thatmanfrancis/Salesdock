@@ -30,7 +30,9 @@ use App\Models\VatSettings;
 use App\Services\FezDelivery;
 use App\Services\PaymentManager;
 use App\Services\PosPayments;
+use App\Services\RecurringBilling;
 use App\Services\StorePayouts;
+use App\Services\SubscriptionPricing;
 use App\Services\TaxReturns;
 use App\Support\Approval;
 use App\Support\AuthMail;
@@ -41,12 +43,15 @@ use App\Support\PlanFeatures;
 use App\Support\Totp;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -1212,6 +1217,34 @@ class OfficeController extends MerchantController
         ]);
     }
 
+    public function resolveBankAccount(Request $request, StorePayouts $payouts): JsonResponse
+    {
+        abort_unless($this->seesSettings(), 403);
+        $data = $request->validate([
+            'bankCode' => ['required', 'string', 'max:20'],
+            'bankAccount' => ['required', 'string', 'regex:/^[0-9]{10}$/'],
+        ]);
+
+        try {
+            $accountName = $payouts->resolveAccount($data['bankCode'], $data['bankAccount']);
+        } catch (\RuntimeException $exception) {
+            if ($exception->getCode() === 503) {
+                Log::warning('Bank account lookup unavailable', [
+                    'provider' => app(PaymentManager::class)->active()->name(),
+                    'provider_status' => $exception->getPrevious()?->getCode() ?? $exception->getCode(),
+                ]);
+
+                return response()->json([
+                    'message' => $exception->getMessage(),
+                    'errors' => ['bankAccount' => [$exception->getMessage()]],
+                ], 503)->header('Cache-Control', 'no-store');
+            }
+            throw ValidationException::withMessages(['bankAccount' => $exception->getMessage()]);
+        }
+
+        return response()->json(['accountName' => $accountName])->header('Cache-Control', 'no-store');
+    }
+
     public function updateSettings(Request $request)
     {
         abort_unless($this->seesSettings(), 403);
@@ -1250,6 +1283,34 @@ class OfficeController extends MerchantController
             : 'Restock drafts are off for the whole shop.');
     }
 
+    /** @param array{bankCode: string, bankAccount: string} $details */
+    private function payoutAccountChanged(StorefrontConfig $store, array $details): bool
+    {
+        return (string) $store->bankCode !== trim($details['bankCode'])
+            || (string) $store->bankAccount !== trim($details['bankAccount']);
+    }
+
+    /** @param array{bankCode: string, bankAccount: string} $details */
+    private function confirmPayoutAccountChange(Request $request, StorefrontConfig $store, array $details): void
+    {
+        if (! $store->bankAccount || ! $this->payoutAccountChanged($store, $details)) {
+            return;
+        }
+
+        $limiterKey = 'payout-account-password:'.$this->user()->id;
+        if (RateLimiter::tooManyAttempts($limiterKey, 5)) {
+            throw ValidationException::withMessages(['password' => 'Too many password attempts. Please wait a minute and try again.']);
+        }
+        $data = $request->validate(['password' => ['required', 'string']], [
+            'password.required' => 'Enter your login password to change this bank account.',
+        ]);
+        if (! Password::check($data['password'], $this->user()->passwordHash)) {
+            RateLimiter::hit($limiterKey, 60);
+            throw ValidationException::withMessages(['password' => 'The login password is incorrect.']);
+        }
+        RateLimiter::clear($limiterKey);
+    }
+
     private function savePayments(Request $request): RedirectResponse
     {
         if ($request->boolean('paymentMethodsPresent')) {
@@ -1276,10 +1337,13 @@ class OfficeController extends MerchantController
         }
         if (! empty($data['bankAccount'])) {
             $store = StorefrontConfig::query()->firstOrNew(['tenantId' => $tenant->id]);
-            try {
-                app(StorePayouts::class)->sync($tenant, $store, $data);
-            } catch (\RuntimeException $exception) {
-                return back()->withInput()->withErrors(['bankAccount' => $exception->getMessage()]);
+            $this->confirmPayoutAccountChange($request, $store, $data);
+            if ($this->payoutAccountChanged($store, $data) || ! $store->{app(PaymentManager::class)->active()->subaccountColumn()}) {
+                try {
+                    app(StorePayouts::class)->sync($tenant, $store, $data);
+                } catch (\RuntimeException $exception) {
+                    return back()->withInput($request->except('password'))->withErrors(['bankAccount' => $exception->getMessage()]);
+                }
             }
         }
         if ($request->boolean('requireVerifiedPayments')) {
@@ -1768,6 +1832,7 @@ class OfficeController extends MerchantController
                 'WAIVED' => 'Waived',
             ],
             'canChange' => $this->changesBilling(),
+            'introductoryEligible' => ! BillingInvoice::query()->where('tenantId', $tenantId)->where('status', 'PAID')->exists(),
             'ready' => $gateway->ready(),
             'gatewayLabel' => $gateway->label(),
             'page' => $page,
@@ -1792,8 +1857,8 @@ class OfficeController extends MerchantController
     {
         abort_unless($invoice->tenantId === $this->tenantId(), 404);
 
-        $plan = null;
-        if ($invoice->subscriptionId) {
+        $plan = ! empty($invoice->billingMetadata['planId']) ? Plan::query()->find($invoice->billingMetadata['planId']) : null;
+        if (! $plan && $invoice->subscriptionId) {
             $plan = Subscription::query()->with('plan')->find($invoice->subscriptionId)?->plan;
         }
         if (! $plan && $invoice->gatewayRef) {
@@ -1839,6 +1904,9 @@ class OfficeController extends MerchantController
             'cycle' => ['required', 'in:MONTHLY,QUARTERLY,ANNUALLY'],
         ]);
         $tenantId = $this->tenantId();
+        if (app(RecurringBilling::class)->hasUncertainRenewal($tenantId)) {
+            return back()->withErrors(['plan' => 'An automatic renewal is awaiting confirmation. Check its status before making another payment.']);
+        }
         $plan = Plan::query()->purchasable()->whereKey($data['plan'])->first();
         if (! $plan) {
             return back()->withErrors(['plan' => 'Choose a plan from the list.']);
@@ -1848,7 +1916,8 @@ class OfficeController extends MerchantController
             return redirect()->route('billing', ['cycle' => $data['cycle']]);
         }
 
-        $amount = $this->planPrice($plan, $data['cycle']);
+        $pricing = SubscriptionPricing::quote($plan, $data['cycle'], $tenantId);
+        $amount = SubscriptionPricing::amount($pricing);
         if ($amount <= 0) {
             return back()->withErrors(['plan' => $plan->name.' is not available on that billing cycle. Choose another cycle.']);
         }
@@ -1861,6 +1930,7 @@ class OfficeController extends MerchantController
         $invoice = BillingInvoice::query()
             ->where('tenantId', $tenantId)
             ->where('status', 'PENDING')
+            ->whereNull('billingMetadata')
             ->latest('createdAt')
             ->first();
         if ($invoice && $invoice->dueDate && $invoice->dueDate->lt(now())) {
@@ -1875,8 +1945,9 @@ class OfficeController extends MerchantController
             'billingCycle' => $data['cycle'],
             'amount' => $amount,
             'currency' => 'NGN',
-            'gateway' => 'FLUTTERWAVE',
+            'gateway' => strtoupper($payments->active()->name()),
             'gatewayRef' => $plan->id,
+            'billingMetadata' => ['kind' => 'manual', 'planId' => $plan->id, 'pricing' => $pricing],
             'periodStart' => $start,
             'periodEnd' => $end,
             'dueDate' => now()->addMinutes(30),
@@ -1907,22 +1978,9 @@ class OfficeController extends MerchantController
         return in_array($user->role?->role ?? 'CASHIER', ['MANAGER', 'ADMIN', 'SUPER_ADMIN'], true);
     }
 
-    private function planPrice(Plan $plan, string $cycle): float
-    {
-        return (float) match ($cycle) {
-            'QUARTERLY' => $plan->quarterlyPrice,
-            'ANNUALLY' => $plan->annualPrice,
-            default => $plan->monthlyPrice,
-        };
-    }
-
     private function periodEnd(Carbon $start, string $cycle): Carbon
     {
-        return match ($cycle) {
-            'QUARTERLY' => $start->copy()->addMonths(3),
-            'ANNUALLY' => $start->copy()->addYear(),
-            default => $start->copy()->addMonth(),
-        };
+        return RecurringBilling::periodEnd($start, $cycle);
     }
 
     private function payrollData(Request $request): array
@@ -2202,6 +2260,9 @@ class OfficeController extends MerchantController
         ]);
         $tenant = Tenant::query()->findOrFail($this->tenantId());
         $store = StorefrontConfig::query()->firstOrNew(['tenantId' => $tenant->id]);
+        $this->confirmPayoutAccountChange($request, $store, $data);
+        $syncPayoutAccount = $this->payoutAccountChanged($store, $data)
+            || ! $store->{app(PaymentManager::class)->active()->subaccountColumn()};
         $store->fill([
             'storeName' => $data['storeName'] ?: $tenant->name,
             'tagline' => $data['tagline'] ?: null,
@@ -2218,14 +2279,18 @@ class OfficeController extends MerchantController
         }
 
         try {
-            app(StorePayouts::class)->sync($tenant, $store, [
-                'bankCode' => $data['bankCode'],
-                'bankAccount' => $data['bankAccount'],
-                'accountName' => $data['accountName'] ?? null,
-                'bankName' => $banks[$data['bankCode']] ?? null,
-            ]);
+            if ($syncPayoutAccount) {
+                app(StorePayouts::class)->sync($tenant, $store, [
+                    'bankCode' => $data['bankCode'],
+                    'bankAccount' => $data['bankAccount'],
+                    'accountName' => $data['accountName'] ?? null,
+                    'bankName' => $banks[$data['bankCode']] ?? null,
+                ]);
+            } else {
+                $store->save();
+            }
         } catch (\RuntimeException $e) {
-            return back()->withInput()->withErrors(['bankAccount' => $e->getMessage()]);
+            return back()->withInput($request->except('password'))->withErrors(['bankAccount' => $e->getMessage()]);
         }
 
         $this->settingsAudit($request, 'storefront');

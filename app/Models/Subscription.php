@@ -17,6 +17,8 @@ class Subscription extends Model
 
     protected $guarded = [];
 
+    protected $hidden = ['recurringAuthorization'];
+
     public $incrementing = false;
 
     protected $keyType = 'string';
@@ -77,6 +79,13 @@ class Subscription extends Model
     protected function casts(): array
     {
         return [
+            'autoRenew' => 'boolean',
+            'recurringAuthorization' => 'encrypted:array',
+            'recurringConsent' => 'array',
+            'recurringAmount' => 'decimal:2',
+            'billingPricing' => 'array',
+            'recurringRemindedAt' => 'datetime',
+            'autoRenewCancelledAt' => 'datetime',
             'currentPeriodStart' => 'datetime',
             'currentPeriodEnd' => 'datetime',
             'trialEndsAt' => 'datetime',

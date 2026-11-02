@@ -431,7 +431,10 @@ class PosPaymentTest extends TestCase
         $this->assertSame(8, $product->fresh()->currentStock);
         $this->assertDatabaseHas('transactions', ['orderId' => $order->id, 'gateway' => 'FLUTTERWAVE', 'status' => 'SUCCESS']);
         Http::assertSentCount(2);
-        Http::assertSent(fn ($request): bool => $request->url() === 'https://api.flutterwave.com/v3/payments' && $request['subaccounts'] === [['id' => 'RS_shop']]);
+        Http::assertSent(fn ($request): bool => $request->url() === 'https://api.flutterwave.com/v3/payments'
+            && $request['subaccounts'][0]['id'] === 'RS_shop'
+            && $request['subaccounts'][0]['transaction_charge_type'] === 'flat'
+            && (float) $request['subaccounts'][0]['transaction_charge'] === 0.0);
     }
 
     public function test_cashier_cannot_change_checkout_policy(): void

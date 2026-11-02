@@ -127,9 +127,10 @@
                             @else
                                 <p class="hint">Connect your collection account before enabling provider confirmation.</p>
                             @endif
-                            <x-ui.select name="bankCode" label="Collection bank (leave blank to keep current account)" :value="old('bankCode', '')" :options="['' => 'Keep current account'] + ($banks ?? [])" searchable />
-                            <label><span>Account number</span><input name="bankAccount" inputmode="numeric" maxlength="10" value="{{ old('bankAccount') }}" autocomplete="off"></label>
-                            <label><span>Account name</span><input name="accountName" value="{{ old('accountName') }}"></label>
+                            <x-ui.select name="bankCode" label="Collection bank" :value="old('bankCode', $store->bankCode)" :options="['' => 'Choose your bank'] + ($banks ?? [])" searchable />
+                            <label><span>Account number</span><input name="bankAccount" inputmode="numeric" maxlength="10" value="{{ old('bankAccount', $store->bankAccount) }}" autocomplete="off"></label>
+                            <label><span>Account name</span><input name="accountName" value="{{ $store->accountName }}" readonly placeholder="Enter your bank and 10-digit account number"></label>
+                            <p class="hint" role="status" aria-live="polite" data-account-status>Account names are confirmed automatically by the payment provider.</p>
                             <div class="ui-modal-actions"><button type="submit" data-loading="Saving…"><span data-label>Save payment settings</span></button></div>
                         </form>
                     </section>
@@ -213,7 +214,7 @@
                                 <input type="checkbox" name="allowGuestOrder" value="1" @checked($guests)>
                             </label>
                             <p class="kicker">Payout account</p>
-                            <p class="hint">Online store card payments settle to this account via {{ $gatewayLabel ?? 'the payment gateway' }}. SalesDock keeps a {{ number_format((float) ($platformSplitPercent ?? 1.5), 1) }}% service fee. Low-stock WhatsApp alerts use your shop phone and each supplier’s WhatsApp number.</p>
+                            <p class="hint">Online store card payments settle to this account via {{ $gatewayLabel ?? 'the payment gateway' }}. Checkout adds a {{ number_format((float) ($platformSplitPercent ?? 1.5), 1) }}% service fee for SalesDock. The remaining payment is allocated to your account, subject to payment-provider charges. Low-stock WhatsApp alerts use your shop phone and each supplier’s WhatsApp number.</p>
                             @if ($payoutConnected ?? false)
                                 <p class="muted">Payouts are connected.</p>
                             @endif
@@ -223,13 +224,14 @@
                                 </div>
                                 <label>
                                     <span>Account number <span class="req">*</span></span>
-                                    <input name="bankAccount" value="{{ old('bankAccount', $store->bankAccount) }}" placeholder="0123456789" inputmode="numeric" required maxlength="20">
+                                    <input name="bankAccount" value="{{ old('bankAccount', $store->bankAccount) }}" placeholder="0123456789" inputmode="numeric" required maxlength="10" pattern="[0-9]{10}">
                                 </label>
                                 <label>
                                     <span>Account name</span>
-                                    <input name="accountName" value="{{ old('accountName', $store->accountName) }}" placeholder="Confirmed from your bank when possible" maxlength="255">
+                                    <input name="accountName" value="{{ $store->accountName }}" placeholder="Confirmed automatically by your bank" readonly>
                                 </label>
                             </div>
+                            <p class="hint" role="status" aria-live="polite" data-account-status>Account names are confirmed automatically by the payment provider.</p>
                             <div class="ui-modal-actions">
                                 <button type="submit" data-loading="Saving…"><span data-label>Save</span></button>
                             </div>
@@ -366,7 +368,144 @@
             </div>
         </div>
     </div>
+    @if (in_array($section, ['payments', 'storefront'], true))
+        <div class="ui-modal" data-payout-password-modal hidden>
+            <button type="button" class="ui-filter-backdrop" data-payout-password-cancel aria-label="Cancel bank account change"></button>
+            <div class="ui-modal-sheet" role="dialog" aria-modal="true" aria-labelledby="payout-password-title" aria-describedby="payout-password-description">
+                <div class="ui-filter-head"><strong id="payout-password-title">Confirm bank account change</strong></div>
+                <p id="payout-password-description">Enter your login password to save the new bank account. This changes where your business receives payments.</p>
+                <div class="ui-modal-grid">
+                    <label class="wide">
+                        <span>Login password <span class="req">*</span></span>
+                        <input type="password" data-payout-password autocomplete="current-password" required aria-describedby="payout-password-error">
+                    </label>
+                </div>
+                <p id="payout-password-error" role="alert">{{ $errors->first('password') }}</p>
+                <div class="ui-modal-actions">
+                    <button type="button" data-payout-password-cancel>Cancel</button>
+                    <button type="button" data-payout-password-confirm>Confirm and save</button>
+                </div>
+            </div>
+        </div>
+    @endif
     <script>
+        const passwordModal = document.querySelector('[data-payout-password-modal]');
+        const passwordInput = passwordModal?.querySelector('[data-payout-password]');
+        let payoutForm;
+        let returnFocus;
+        const openPasswordModal = (form) => {
+            payoutForm = form;
+            returnFocus = document.activeElement;
+            passwordInput.value = '';
+            passwordModal.hidden = false;
+            passwordInput.focus();
+        };
+        if (passwordModal) {
+            const cancelPasswordModal = () => {
+                passwordModal.hidden = true;
+                passwordInput.value = '';
+                payoutForm?.querySelector('[data-payout-password-value]')?.remove();
+                returnFocus?.focus();
+            };
+            const confirmPassword = () => {
+                if (!passwordInput.reportValidity()) return;
+                let field = payoutForm.querySelector('[data-payout-password-value]');
+                if (!field) {
+                    field = document.createElement('input');
+                    field.type = 'hidden';
+                    field.name = 'password';
+                    field.dataset.payoutPasswordValue = '';
+                    payoutForm.append(field);
+                }
+                field.value = passwordInput.value;
+                passwordInput.value = '';
+                passwordModal.hidden = true;
+                payoutForm.requestSubmit();
+            };
+            passwordModal.querySelectorAll('[data-payout-password-cancel]').forEach((button) => button.addEventListener('click', cancelPasswordModal));
+            passwordModal.querySelector('[data-payout-password-confirm]').addEventListener('click', confirmPassword);
+            passwordModal.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') { event.preventDefault(); cancelPasswordModal(); }
+                if (event.key === 'Enter' && event.target === passwordInput) { event.preventDefault(); confirmPassword(); }
+                if (event.key === 'Tab') {
+                    const fields = passwordModal.querySelector('[role="dialog"]').querySelectorAll('input, button');
+                    const first = fields[0];
+                    const last = fields[fields.length - 1];
+                    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+                    if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+                }
+            });
+        }
+        document.querySelectorAll('[data-account-status]').forEach((status) => {
+            const form = status.closest('form');
+            const bank = form.elements.namedItem('bankCode');
+            const number = form.elements.namedItem('bankAccount');
+            const name = form.elements.namedItem('accountName');
+            const savedBank = @json((string) $store->bankCode);
+            const savedAccount = @json((string) $store->bankAccount);
+            const accountChanged = () => bank.value !== savedBank || number.value !== savedAccount;
+            form.addEventListener('submit', (event) => {
+                if (savedAccount && accountChanged() && !form.querySelector('[data-payout-password-value]')?.value) {
+                    event.preventDefault();
+                    openPasswordModal(form);
+                }
+            });
+            let timer;
+            let pending;
+            let revision = 0;
+            const resolve = () => {
+                status.classList.remove('note', 'ended');
+                status.classList.add('hint');
+                status.setAttribute('role', 'status');
+                status.setAttribute('aria-live', 'polite');
+                form.querySelector('[data-payout-password-value]')?.remove();
+                clearTimeout(timer);
+                pending?.abort();
+                const currentRevision = ++revision;
+                name.value = '';
+                if (!bank.value || !/^[0-9]{10}$/.test(number.value)) {
+                    status.textContent = 'Choose your bank and enter a 10-digit account number.';
+                    return;
+                }
+                status.textContent = 'Checking account name…';
+                timer = setTimeout(async () => {
+                    pending = new AbortController();
+                    try {
+                        const response = await fetch(@json(route('settings.bank-account.resolve', [], false)), {
+                            method: 'POST',
+                            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': form.elements.namedItem('_token').value },
+                            credentials: 'same-origin',
+                            body: JSON.stringify({ bankCode: bank.value, bankAccount: number.value }),
+                            signal: pending.signal,
+                        });
+                        const result = await response.json().catch(() => ({
+                            message: response.status === 419
+                                ? 'Your session expired. Reload this page and try again.'
+                                : 'Bank verification returned an unexpected response. Please reload this page and try again.',
+                        }));
+                        if (currentRevision !== revision) return;
+                        if (!response.ok || typeof result.accountName !== 'string' || result.accountName.trim() === '') {
+                            throw new Error(result.errors?.bankAccount?.[0] || result.errors?.bankCode?.[0] || result.message || 'Could not verify this account. Please try again.');
+                        }
+                        name.value = result.accountName;
+                        status.textContent = 'Account name confirmed. Check it before saving.';
+                    } catch (error) {
+                        if (error.name !== 'AbortError' && currentRevision === revision) {
+                            status.classList.remove('hint');
+                            status.classList.add('note', 'ended');
+                            status.setAttribute('role', 'alert');
+                            status.setAttribute('aria-live', 'assertive');
+                            status.textContent = error.message || 'Could not verify this account. Please try again.';
+                        }
+                    }
+                }, 500);
+            };
+            bank.addEventListener('change', resolve);
+            number.addEventListener('input', resolve);
+            if (accountChanged() && bank.value && number.value) resolve();
+            if (savedAccount && !accountChanged()) status.textContent = 'Your saved bank account is shown above. Changing it requires your login password.';
+            if (@json($errors->has('password'))) openPasswordModal(form);
+        });
         document.querySelectorAll('[data-file]').forEach((box) => {
             const input = box.querySelector('[data-file-input]');
             const name = box.querySelector('[data-file-name]');
@@ -398,7 +537,8 @@
             });
         }
         document.querySelectorAll('form[data-busy]').forEach((box) => {
-            box.addEventListener('submit', () => {
+            box.addEventListener('submit', (event) => {
+                if (event.defaultPrevented) return;
                 const button = box.querySelector('[type="submit"]');
                 if (!button || button.disabled) return;
                 button.disabled = true;

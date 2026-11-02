@@ -27,12 +27,18 @@
                             Paystack
                         </label>
                     </div>
+                    <p class="muted">Only the selected provider handles bank-account verification and new payments after you save. The other provider is inactive for these requests, even if its keys are saved. Its keys are retained to verify webhooks for earlier payments.</p>
                 </div>
                 <label class="ui-field">
                     <span>Platform fee (%)</span>
                     <input type="number" name="platform_split_percent" value="{{ old('platform_split_percent', $payment['platform_split_percent']) }}" min="0" max="50" step="0.1" required>
                 </label>
-                <p class="muted wide" style="margin:0">Taken from each online store card payment before the rest settles to the shop’s bank. Shops must re-save their payout account after you change this, so the new split reaches the gateway.</p>
+                <label class="check wide">
+                    <input type="checkbox" name="recurring_enabled" value="1" @checked(old('recurring_enabled', $payment['recurring_enabled']))>
+                    <span>Enable opt-in recurring card renewals for the selected provider</span>
+                </label>
+                <p class="muted wide">Enable only after confirming that the provider account supports unattended recurring card charges. Flutterwave requires approval for NOAUTH token charges. Test card authorisation, cancellation and renewal in sandbox first. This does not opt existing merchants in.</p>
+                <p class="muted wide" style="margin:0">Added to online storefront checkout as a separate SalesDock fee. The saved order fee is allocated to SalesDock; delivery is excluded from its calculation. Verified in-store POS payments have no SalesDock transaction commission. Gateway processing fees remain separate.</p>
 
                 <p class="kicker wide" style="margin-top:0.75rem">Flutterwave</p>
                 <label class="ui-field wide">

@@ -9,6 +9,7 @@ use App\Models\PlatformSetting;
 use App\Models\Subscription;
 use App\Models\TenantRegistration;
 use App\Services\PaymentManager;
+use App\Services\SubscriptionPricing;
 use App\Services\TenantProvisioner;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -65,7 +66,8 @@ class SelectPlanController extends Controller
 
         $start = now();
         $end = $provisioner->periodEnd($start, $data['billingCycle']);
-        $amount = $provisioner->price($plan, $data['billingCycle']);
+        $pricing = SubscriptionPricing::quote($plan, $data['billingCycle'], $tenant->id);
+        $amount = SubscriptionPricing::amount($pricing);
         if ($amount <= 0) {
             return back()->withErrors(['billingCycle' => $plan->name.' is not available on that billing cycle. Choose another cycle.']);
         }
@@ -76,6 +78,7 @@ class SelectPlanController extends Controller
             'amount' => $amount,
             'gateway' => strtoupper((string) PlatformSetting::payment()['provider']),
             'gatewayRef' => $plan->id,
+            'billingMetadata' => ['kind' => 'manual', 'planId' => $plan->id, 'pricing' => $pricing],
             'periodStart' => $start,
             'periodEnd' => $end,
             'dueDate' => now()->addMinutes(30),
