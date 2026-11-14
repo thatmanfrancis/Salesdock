@@ -12,7 +12,7 @@ class DowngradeSubscriptions extends Command
 {
     protected $signature = 'subscriptions:downgrade';
 
-    protected $description = 'Expire PAST_DUE subscriptions whose grace period has ended; the shop stays locked until a paid plan is chosen';
+    protected $description = 'End paid access after the grace period while preserving Basic free selling tools';
 
     public function handle(): int
     {
@@ -27,6 +27,9 @@ class DowngradeSubscriptions extends Command
         foreach ($subscriptions as $sub) {
             $sub->forceFill([
                 'status' => 'EXPIRED',
+                'autoRenew' => false,
+                'recurringAuthorization' => null,
+                'recurringAmount' => null,
                 'nextBillingDate' => null,
                 'cancelAtPeriodEnd' => false,
             ])->save();
@@ -40,7 +43,7 @@ class DowngradeSubscriptions extends Command
                 'tenantId' => $tenant->id,
                 'type' => 'SUBSCRIPTION_EXPIRED',
                 'title' => 'Subscription ended',
-                'message' => 'Your grace period ended. Choose a plan to unlock your dashboard again. Your data is safe.',
+                'message' => 'Your paid grace period ended. Basic free access keeps POS and basic shop tools available. Upgrade to restore advanced features. Your data is safe.',
                 'isRead' => false,
                 'createdAt' => now(),
             ]);
@@ -52,12 +55,12 @@ class DowngradeSubscriptions extends Command
 
             if ($owner?->email) {
                 AuthMail::send($owner->email, $owner->name, 'Your SalesDock subscription has ended', [
-                    'preheader' => 'Choose a plan to unlock your dashboard again.',
+                    'preheader' => 'Basic free access keeps you selling. Upgrade to restore advanced features.',
                     'heading' => 'Subscription ended',
                     'kicker' => $tenant->name,
                     'paragraphs' => [
                         'Hi <strong style="color:#111827;">'.e($owner->name).'</strong>, the grace period for <strong>'.e($tenant->name).'</strong> has ended.',
-                        'The dashboard is locked until a plan is paid for. Your products, sales and customers are all kept safe, and everything comes back as soon as you renew.',
+                        'You can keep selling with Basic free access. Advanced paid features and the online storefront are unavailable until you subscribe again. Your products, sales, customers and invoices are retained.',
                     ],
                     'url' => route('billing'),
                     'label' => 'Choose a plan',

@@ -255,11 +255,14 @@
                 <section class="card">
                     <p class="kicker">Subscription</p>
                     @if ($tenant->subscription)
-                        <div class="info-row"><span>Plan</span><strong>{{ $tenant->subscription->plan?->name ?: '—' }}</strong></div>
-                        <div class="info-row"><span>Tier</span><strong>{{ $tenant->subscription->plan?->tier ? ucfirst(strtolower($tenant->subscription->plan->tier)) : '—' }}</strong></div>
+                        <div class="info-row"><span>Plan</span><strong>{{ $tenant->subscription->hasPlanAccess() ? ($tenant->subscription->plan?->name ?: '—') : ($tenant->subscription->usesBasicAccess() ? 'Basic — free access' : 'No active paid plan') }}</strong></div>
+                        <div class="info-row"><span>Tier</span><strong>{{ $tenant->subscription->hasPlanAccess() && $tenant->subscription->plan?->tier ? ucfirst(strtolower($tenant->subscription->plan->tier)) : '—' }}</strong></div>
                         <div class="info-row"><span>Billing</span><strong>{{ $cycles[$tenant->subscription->billingCycle] ?? $tenant->subscription->billingCycle }}</strong></div>
                         <div class="info-row"><span>Period end</span><strong>{{ $tenant->subscription->currentPeriodEnd?->timezone('Africa/Lagos')->format('d M Y') ?: '—' }}</strong></div>
                         <div class="info-row"><span>Status</span><strong><span class="badge {{ $subTone[$tenant->subscription->status] ?? 'draft' }}">{{ $statuses[$tenant->subscription->status] ?? $tenant->subscription->status }}</span></strong></div>
+                        @if (! $tenant->trashed() && $tenant->subscription->status !== 'CANCELLED')
+                            @include('platform.cancel-subscription', ['tenant' => $tenant])
+                        @endif
                     @else
                         <p class="empty">No subscription on this shop.</p>
                     @endif

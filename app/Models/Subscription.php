@@ -37,8 +37,38 @@ class Subscription extends Model
         return $this->status === 'TRIALING' && $this->trialEndsAt?->isFuture();
     }
 
+    public function trialDaysRemaining(): ?int
+    {
+        if (! $this->onTrial()) {
+            return null;
+        }
+
+        return max(1, (int) ceil((float) now()->diffInDays($this->trialEndsAt)));
+    }
+
+    public function hasEndedFreeTrial(): bool
+    {
+        if (! $this->trialEndsAt || $this->trialEndsAt->isFuture()) {
+            return false;
+        }
+
+        return $this->status === 'TRIALING'
+            || ($this->status === 'EXPIRED' && $this->currentPeriodEnd?->equalTo($this->trialEndsAt));
+    }
+
+    public function hasPlanAccess(): bool
+    {
+        return $this->onTrial() || in_array($this->status, ['ACTIVE', 'PAST_DUE'], true);
+    }
+
+    public function usesBasicAccess(): bool
+    {
+        return in_array($this->status, ['CANCELLED', 'EXPIRED'], true)
+            || ($this->status === 'TRIALING' && ! $this->onTrial());
+    }
+
     /**
-     * The trial or paid period is over and the shop must pick a paid plan to continue.
+     * Whether the trial or paid period has ended. Basic access may remain available.
      */
     public function hasEnded(): bool
     {
@@ -50,7 +80,7 @@ class Subscription extends Model
     }
 
     /**
-     * Features this shop can use right now. A running trial opens everything; an ended one opens nothing.
+     * A running trial opens every feature. Ended paid access falls back to Basic; suspension blocks access.
      *
      * @return list<string>
      */
@@ -59,8 +89,8 @@ class Subscription extends Model
         if ($this->onTrial()) {
             return PlanFeatures::everything();
         }
-        if ($this->hasEnded()) {
-            return [];
+        if (! $this->hasPlanAccess()) {
+            return $this->usesBasicAccess() ? PlanFeatures::basic() : [];
         }
 
         return is_array($this->plan?->features) ? $this->plan->features : [];

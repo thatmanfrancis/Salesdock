@@ -19,6 +19,7 @@ class ProfilePinTest extends TestCase
             'database/migrations/2026_09_23_000001_create_salesdock_schema.php',
             'database/migrations/2026_09_25_000001_create_support_tables.php',
             'database/migrations/2026_10_08_125551_add_deleted_at_to_tenants.php',
+            'database/migrations/2026_11_14_212521_add_verification_channel_to_tenant_registrations.php',
         ], '--no-interaction' => true])->assertExitCode(0);
     }
 

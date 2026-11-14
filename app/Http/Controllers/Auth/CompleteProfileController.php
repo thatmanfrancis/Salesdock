@@ -11,6 +11,7 @@ use App\Models\TenantRegistration;
 use App\Models\User;
 use App\Services\PaymentManager;
 use App\Services\StorePayouts;
+use App\Support\PhoneNumber;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -65,6 +66,10 @@ class CompleteProfileController extends Controller
             'accountName' => 'account name',
         ]);
         $clean = fn (?string $value): ?string => ($value = trim((string) $value)) !== '' ? $value : null;
+        $data['phone'] = PhoneNumber::e164($data['phone']);
+        if ($data['phone'] === null) {
+            throw ValidationException::withMessages(['phone' => 'Enter a valid WhatsApp number, such as 0803 000 0000.'])->errorBag('profile');
+        }
         $tenant = $user->tenant;
 
         try {

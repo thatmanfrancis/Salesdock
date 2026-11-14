@@ -9,6 +9,9 @@
     <link rel="preconnect" href="https://fonts.bunny.net">
     <link href="https://fonts.bunny.net/css?family=space-grotesk:400,500,600,700" rel="stylesheet">
     <link rel="stylesheet" href="{{ asset('css/salesdock.css') }}?v={{ filemtime(public_path('css/salesdock.css')) }}">
+    @if (request()->routeIs('admin.*'))
+        <script src="{{ asset('js/admin-subscription-cancellation.js') }}?v={{ filemtime(public_path('js/admin-subscription-cancellation.js')) }}" defer></script>
+    @endif
     @if (request()->routeIs('pos'))
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#16a34a">
@@ -69,10 +72,20 @@
                 <span>Your workspace is in preview. Choose a plan to unlock selling, inventory, and staff tools.</span>
                 <a href="{{ route('billing') }}">Choose a plan</a>
             </div>
-        @elseif (($subscription ?? null) && $subscription->hasEnded())
+        @elseif (($trialDaysRemaining = ($subscription ?? null)?->trialDaysRemaining()) !== null && ! in_array($role ?? null, ['CLIENT', 'SUPER_ADMIN'], true))
+            <div class="banner">
+                <span>Your free trial has <strong>{{ $trialDaysRemaining }} {{ $trialDaysRemaining === 1 ? 'day' : 'days' }} left</strong>. Select a paid plan to keep advanced features.</span>
+                <a href="{{ route('billing') }}">Select a subscription plan</a>
+            </div>
+        @elseif (($subscription ?? null) && $subscription->hasEndedFreeTrial() && ! in_array($role ?? null, ['CLIENT', 'SUPER_ADMIN'], true))
             <div class="banner banner-warn">
-                <span>Your {{ $subscription->status === 'TRIALING' ? 'free trial' : 'subscription' }} has ended. Choose a plan to unlock your dashboard. Your data is safe.</span>
-                <a href="{{ route('billing') }}">Choose a plan</a>
+                <span>Your free trial has ended. Basic free access is available. Select a paid plan to restore advanced features.</span>
+                <a href="{{ route('billing') }}">Select a subscription plan</a>
+            </div>
+        @elseif (($subscription ?? null) && $subscription->usesBasicAccess())
+            <div class="banner banner-warn">
+                <span>You are on Basic free access. POS and basic shop tools remain available. Upgrade to unlock paid features.</span>
+                <a href="{{ route('billing') }}">View plans</a>
             </div>
         @elseif (($subscription ?? null) && $subscription->status === 'PAST_DUE')
             @php
@@ -83,9 +96,9 @@
                 <span>
                     Your subscription has expired.
                     @if ($daysLeft > 0)
-                        You have <strong>{{ $daysLeft }} day{{ $daysLeft === 1 ? '' : 's' }}</strong> to renew before your dashboard is locked.
+                        You have <strong>{{ $daysLeft }} day{{ $daysLeft === 1 ? '' : 's' }}</strong> to renew before paid features end and Basic free access begins.
                     @else
-                        Renew now to keep your dashboard open.
+                        Renew to keep your paid features. Basic selling tools remain available afterwards.
                     @endif
                 </span>
                 <a href="{{ route('billing') }}">Renew now</a>
@@ -106,6 +119,9 @@
                 </a>
             @endif
             @yield('content')
+            @if (request()->routeIs('admin.*') && session('subscription_cancelled'))
+                @include('platform.subscription-cancelled')
+            @endif
         </div>
     </div>
     <script>

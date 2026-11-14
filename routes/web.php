@@ -46,6 +46,7 @@ Route::middleware('guest')->group(function () {
     Route::post('/login', [LoginController::class, 'store'])->middleware('throttle:auth-login');
     Route::get('/register', [RegisterController::class, 'create'])->name('register');
     Route::post('/register', [RegisterController::class, 'store'])->middleware('throttle:auth-register');
+    Route::get('/register/verification', [RegisterController::class, 'verificationForm'])->name('register.verification');
     Route::post('/register/resend', [RegisterController::class, 'resend'])->middleware('throttle:auth-mail')->name('register.resend');
     Route::post('/register/verify-otp', [RegisterController::class, 'verifyOtp'])->middleware('throttle:auth-token')->name('register.verify-otp');
     Route::get('/forgot-password', [PasswordController::class, 'requestForm'])->name('password.request');
@@ -95,6 +96,8 @@ Route::prefix('store/{slug}')->group(function () {
 });
 
 Route::middleware('auth')->group(function () {
+    Route::post('/profile/recovery-email', [PasswordController::class, 'sendRecoveryConfirmation'])->middleware('throttle:auth-session')->name('recovery-email.send');
+    Route::get('/profile/recovery-email/confirm', [PasswordController::class, 'confirmRecoveryEmail'])->middleware('throttle:auth-token')->name('recovery-email.confirm');
     Route::post('/logout', [LoginController::class, 'destroy'])->name('logout');
     Route::get('/welcome-back', [WelcomeBackController::class, 'show'])->name('welcome-back');
     Route::post('/welcome-back', [WelcomeBackController::class, 'store'])->middleware('throttle:auth-session')->name('welcome-back.store');
@@ -230,6 +233,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/profile', [OfficeController::class, 'updateProfile'])->name('profile.update');
         Route::get('/billing', [OfficeController::class, 'billing'])->name('billing');
         Route::delete('/billing/auto-renew', [AutoRenewController::class, 'destroy'])->middleware('throttle:auth-session')->name('billing.auto-renew.destroy');
+        Route::post('/billing/auto-renew', [AutoRenewController::class, 'store'])->middleware('throttle:auth-session')->name('billing.auto-renew.store');
         Route::get('/billing/authorizations/{invoice}', [AutoRenewController::class, 'show'])->name('billing.authorization');
         Route::post('/billing', [OfficeController::class, 'choosePlan'])->name('billing.choose');
         Route::get('/billing/invoices/{invoice}/view', [OfficeController::class, 'invoice'])->name('billing.invoice');
@@ -254,6 +258,7 @@ Route::middleware('auth')->group(function () {
             Route::delete('/tenants/{tenant}/erase', [PlatformController::class, 'eraseTenant'])->name('admin.tenants.erase')->withTrashed();
             Route::post('/tenants/{tenant}', [PlatformController::class, 'updateTenant'])->name('admin.tenants.update');
             Route::post('/tenants/{tenant}/subscription', [PlatformController::class, 'overrideSubscription'])->name('admin.tenants.subscription');
+            Route::delete('/tenants/{tenant}/subscription', [PlatformController::class, 'cancelSubscription'])->middleware('throttle:5,1')->name('admin.tenants.subscription.cancel');
             Route::delete('/tenants/{tenant}', [PlatformController::class, 'destroyTenant'])->name('admin.tenants.destroy');
             Route::delete('/tenants/{tenant}/users/{user}', [PlatformController::class, 'destroyUser'])->name('admin.tenants.users.destroy');
             Route::post('/tenants/{tenant}/suppliers', [PlatformController::class, 'storeSupplier'])->name('admin.tenants.suppliers.store');

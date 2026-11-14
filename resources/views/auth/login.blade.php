@@ -122,6 +122,7 @@
             </script>
 
             <div>You don't have an account? <a href="{{ route('register') }}" class="font-semibold text-blue-500">Sign up</a></div>
+            <p class="text-sm text-gray-500">Registered but not verified? <a href="{{ route('register.verification') }}" class="font-semibold text-green-600 underline">Verify your account / resend code</a></p>
         @endif
     </x-auth.shell>
 @endsection

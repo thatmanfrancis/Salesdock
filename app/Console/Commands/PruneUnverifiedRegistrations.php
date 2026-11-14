@@ -20,6 +20,7 @@ class PruneUnverifiedRegistrations extends Command
     {
         $removed = TenantRegistration::query()
             ->where('emailVerified', false)
+            ->whereNull('phoneVerifiedAt')
             ->where('createdAt', '<', now()->subDays(self::KEEP_DAYS))
             ->delete();
 

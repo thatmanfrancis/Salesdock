@@ -20,6 +20,14 @@
                 <p>Agreed payment schedule: {{ \App\Services\SubscriptionPricing::description($consent['pricing']) }}</p>
             @endif
             <p>{{ $consent['text'] }}</p>
+            @if (! empty($consent['firstRenewalAt']))
+                <p>First authorised renewal: {{ \Illuminate\Support\Carbon::parse($consent['firstRenewalAt'])->timezone('Africa/Lagos')->format('d M Y') }}.</p>
+            @endif
+            @foreach ($previousConsents ?? [] as $previousConsent)
+                <h2>Previous authorisation</h2>
+                <p>Accepted {{ \Illuminate\Support\Carbon::parse($previousConsent['acceptedAt'])->timezone('Africa/Lagos')->format('d M Y H:i:s T') }} · Version {{ $previousConsent['version'] }}</p>
+                <p>{{ $previousConsent['text'] }}</p>
+            @endforeach
             <p>This record documents electronic acceptance; automatic renewal is enabled only after the payment provider confirms a reusable card authorisation. It is not a direct-debit mandate for the merchant's collection bank account.</p>
             <p>Current automatic renewal status: {{ $subscription?->autoRenew ? 'Enabled' : 'Off' }}.</p>
             @if ($subscription?->autoRenewCancelledAt)

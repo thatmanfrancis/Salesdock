@@ -47,6 +47,10 @@ class ZohoWhatsApp
      */
     public function sendRestockAlert(string $phone, array $placeholders, ?string $name = null): bool
     {
+        if (config('services.meta_whatsapp.enabled')) {
+            return app(MetaWhatsApp::class)->sendTemplate($phone, (string) config('services.meta_whatsapp.restock_template'), $placeholders);
+        }
+
         $templateId = PlatformSetting::zohoWhatsApp()['restock_template_id'];
         if ($templateId === '') {
             return false;
@@ -60,6 +64,10 @@ class ZohoWhatsApp
      */
     public function sendPurchaseOrder(string $phone, array $placeholders, ?string $name = null): bool
     {
+        if (config('services.meta_whatsapp.enabled')) {
+            return app(MetaWhatsApp::class)->sendTemplate($phone, (string) config('services.meta_whatsapp.purchase_order_template'), $placeholders);
+        }
+
         $templateId = PlatformSetting::zohoWhatsApp()['purchase_order_template_id']
             ?: PlatformSetting::zohoWhatsApp()['restock_template_id'];
         if ($templateId === '') {

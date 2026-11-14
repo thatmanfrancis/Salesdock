@@ -104,7 +104,7 @@
                         <span>Two-factor</span>
                         <span class="badge {{ $member->twoFaEnabled ? 'active' : 'cancelled' }}">{{ $member->twoFaEnabled ? 'On' : 'Off' }}</span>
                     </div>
-                    @if ($canWrite)
+                    @if ($canWrite && ! $isOwner)
                         <button type="button" class="tool" data-pin-open>Reset PIN</button>
                     @endif
                 </section>
@@ -172,6 +172,7 @@
             </div>
         @endunless
 
+        @unless ($isOwner)
         <div class="ui-modal" data-pin-modal hidden>
             <button type="button" class="ui-filter-backdrop" data-close aria-label="Close"></button>
             <form class="ui-modal-sheet" method="post" action="{{ route('staff.pin', $member) }}" data-busy>
@@ -187,6 +188,7 @@
                 </div>
             </form>
         </div>
+        @endunless
 
         <script>
             const bind = (modal, opener) => {

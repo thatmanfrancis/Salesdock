@@ -7,10 +7,12 @@ use App\Models\Branch;
 use App\Models\BranchStock;
 use App\Models\Hold;
 use App\Models\Order;
+use App\Models\Plan;
 use App\Models\PlatformSetting;
 use App\Models\Product;
 use App\Models\Role;
 use App\Models\StorefrontConfig;
+use App\Models\Subscription;
 use App\Models\Tenant;
 use App\Models\Transaction;
 use App\Models\User;
@@ -51,6 +53,28 @@ class PosPaymentTest extends TestCase
         $this->assertSame(8, $product->fresh()->currentStock);
         $this->assertDatabaseHas('transactions', ['gateway' => $gateway, 'method' => $method, 'status' => 'SUCCESS']);
         $this->assertDatabaseCount('sales_ledger', 1);
+    }
+
+    #[TestWith(['CANCELLED'])]
+    #[TestWith(['EXPIRED'])]
+    public function test_basic_access_keeps_real_pos_sales_working_after_paid_access_ends(string $status): void
+    {
+        [$user, $product] = $this->shop();
+        $plan = Plan::query()->create(['name' => 'Previous paid plan', 'tier' => 'ENTERPRISE', 'monthlyPrice' => 35000,
+            'quarterlyPrice' => 100000, 'annualPrice' => 350000, 'features' => ['POS Terminal', 'Advanced Analytics']]);
+        Subscription::query()->create(['tenantId' => $user->tenantId, 'planId' => $plan->id, 'status' => $status,
+            'currentPeriodStart' => now()->subMonth(), 'currentPeriodEnd' => now()->subMinute()]);
+
+        $this->actingAs($user)->postJson(route('pos.store'), ['qty' => [$product->id => 2], 'method' => 'CASH'])
+            ->assertOk()->assertJsonPath('success', true);
+
+        $this->assertSame(8, $product->fresh()->currentStock);
+        $this->assertDatabaseHas('transactions', ['method' => 'CASH', 'status' => 'SUCCESS']);
+        $this->get(route('pos'))->assertOk();
+        $this->get(route('products'))->assertOk();
+        $this->get(route('customers'))->assertOk();
+        $this->get(route('orders'))->assertOk();
+        $this->get('/analytics')->assertRedirect(route('not-eligible'));
     }
 
     public function test_cashless_policy_rejects_direct_cash_submissions(): void
@@ -447,6 +471,37 @@ class PosPaymentTest extends TestCase
             ->post(route('settings.update'), ['section' => 'payments', 'cashlessOnly' => 1])->assertForbidden();
 
         $this->assertFalse($owner->tenant->cashlessOnly);
+    }
+
+    public function test_settings_delegate_can_save_payment_methods_but_cannot_set_or_replace_payout_account(): void
+    {
+        [$user] = $this->shop();
+        $role = Role::query()->create(['tenantId' => $user->tenantId, 'name' => 'Delegate', 'role' => 'MANAGER', 'permissions' => ['canManageSettings' => true]]);
+        $user->update(['roleId' => $role->id]);
+        $store = StorefrontConfig::query()->where('tenantId', $user->tenantId)->firstOrFail();
+        $this->withoutMiddleware(ShareWorkspace::class)->actingAs($user);
+        $details = ['section' => 'payments', 'bankCode' => '058', 'bankAccount' => '0123456789'];
+
+        $this->post(route('settings.update'), $details)->assertForbidden();
+        $this->assertNull($store->fresh()->bankAccount);
+        $store->update(['bankCode' => '058', 'bankAccount' => '1111111111']);
+        $this->post(route('settings.update'), $details)->assertForbidden();
+        $this->assertSame('1111111111', $store->fresh()->bankAccount);
+
+        $this->post(route('settings.update'), ['section' => 'payments', 'posPaymentMethods' => ['TRANSFER']])
+            ->assertSessionHasNoErrors()->assertRedirect(route('settings', ['section' => 'payments']));
+        $this->assertSame(['TRANSFER'], $user->tenant->fresh()->posPaymentMethods);
+    }
+
+    public function test_owner_must_confirm_first_payout_account_with_password(): void
+    {
+        [$owner] = $this->shop();
+
+        $this->withoutMiddleware(ShareWorkspace::class)->actingAs($owner)
+            ->post(route('settings.update'), ['section' => 'payments', 'bankCode' => '058', 'bankAccount' => '0123456789'])
+            ->assertSessionHasErrors('password');
+
+        $this->assertNull(StorefrontConfig::query()->where('tenantId', $owner->tenantId)->value('bankAccount'));
     }
 
     public function test_owner_can_enable_policy_without_affecting_other_shops(): void

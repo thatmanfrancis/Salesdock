@@ -38,6 +38,7 @@
                     <span>Enable opt-in recurring card renewals for the selected provider</span>
                 </label>
                 <p class="muted wide">Enable only after confirming that the provider account supports unattended recurring card charges. Flutterwave requires approval for NOAUTH token charges. Test card authorisation, cancellation and renewal in sandbox first. This does not opt existing merchants in.</p>
+                <p class="muted wide">Flutterwave checkout: open Dashboard → Settings → Account settings and turn off “Enable Dashboard Payment Options”. Newer dashboards put this under Business preferences as “Disable preferred payment methods”; that override must also be off so each checkout's requested methods apply. SalesDock requests card-only software subscription payments. <a href="https://developer.flutterwave.com/docs/flutterwave-standard-1" target="_blank" rel="noopener">Provider setup instructions</a>.</p>
                 <p class="muted wide" style="margin:0">Added to online storefront checkout as a separate SalesDock fee. The saved order fee is allocated to SalesDock; delivery is excluded from its calculation. Verified in-store POS payments have no SalesDock transaction commission. Gateway processing fees remain separate.</p>
 
                 <p class="kicker wide" style="margin-top:0.75rem">Flutterwave</p>

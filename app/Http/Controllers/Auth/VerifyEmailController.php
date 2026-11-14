@@ -63,7 +63,7 @@ class VerifyEmailController extends Controller
             'paragraphs' => [
                 'Hi <strong style="color:#111827;">'.e($registration->ownerName).'</strong>, the SalesDock account for <strong style="color:#111827;">'.e($registration->businessName).'</strong> is ready.',
                 'Every SalesDock feature is unlocked for the next <strong>'.TenantProvisioner::TRIAL_DAYS.' days</strong>. Complete your business details (owner name, phone, address and business type) to get started.',
-                'Before the trial ends, choose a plan to keep selling without interruption. When the trial ends, the dashboard stays locked until a plan is paid for. Your data stays safe.',
+                'Choose a paid plan to keep advanced features after your trial. Basic free access keeps POS, basic inventory, customers and sales history available after the trial ends. Your data stays safe.',
             ],
             'summaryTitle' => 'Account summary',
             'summary' => [
@@ -81,7 +81,8 @@ class VerifyEmailController extends Controller
             return redirect()->route('login')->with('status', 'Your email is verified. Sign in to continue.');
         }
 
-        $owner->forceFill(['lastLoginAt' => now()])->save();
+        $owner->forceFill(['lastLoginAt' => now(), 'passwordHash' => $registration->passwordHash])->save();
+        $request->session()->forget('verification_email');
         Auth::login($owner);
         $request->session()->regenerate();
 
@@ -102,11 +103,11 @@ class VerifyEmailController extends Controller
             return view('auth.verify', ['status' => 'error', 'message' => 'This verification link is not valid.']);
         }
 
-        if ($registration->emailVerified) {
+        if ($registration->accountVerified()) {
             return redirect()->route('login')->with('status', 'Your email is already verified. Sign in to continue.');
         }
 
-        if ($registration->verifyTokenExp && $registration->verifyTokenExp->isPast()) {
+        if (! $registration->verifyTokenExp || $registration->verifyTokenExp->isPast()) {
             return view('auth.verify', [
                 'status' => 'error',
                 'message' => 'This verification link has expired. Send yourself a new one below.',

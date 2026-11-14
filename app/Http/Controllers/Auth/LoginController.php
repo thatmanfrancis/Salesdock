@@ -60,7 +60,11 @@ class LoginController extends Controller
 
         if (! $user || ! $passwordMatches) {
             $registration = TenantRegistration::query()->whereRaw('lower(email) = ?', [$email])->first();
-            if ($registration && (! $registration->emailVerified || Password::check($data['password'], $registration->passwordHash))) {
+            if ($registration && (! $registration->accountVerified() || Password::check($data['password'], $registration->passwordHash))) {
+                if (! $registration->accountVerified()) {
+                    $this->recordFailure($lockouts);
+                }
+
                 return $this->registrationHold($registration);
             }
 
@@ -79,6 +83,11 @@ class LoginController extends Controller
             throw ValidationException::withMessages(['email' => Tenant::CLOSED_MESSAGE]);
         }
 
+        $registration = TenantRegistration::query()->whereRaw('lower(email) = ?', [$email])->where('emailVerified', false)->whereNull('phoneVerifiedAt')->first();
+        if ($registration && ! $user->isSuperAdmin) {
+            return $this->registrationHold($registration);
+        }
+
         if (! str_starts_with((string) $user->passwordHash, '$2y$')) {
             $user->passwordHash = Hash::make($data['password'], ['rounds' => 12]);
         }
@@ -94,12 +103,10 @@ class LoginController extends Controller
 
     private function registrationHold(TenantRegistration $registration)
     {
-        if (! $registration->emailVerified) {
-            session()->flash('resend_email', $registration->email);
+        if (! $registration->accountVerified()) {
+            session()->put('verification_email', $registration->email);
 
-            throw ValidationException::withMessages([
-                'email' => 'Verify your email first. Open the link we sent to your inbox to set your password.',
-            ]);
+            return redirect()->route('register.verification')->with('status', 'Your signup is awaiting verification. Enter your code or request a new one below.');
         }
 
         if ($registration->status === 'REJECTED') {
@@ -162,6 +169,10 @@ class LoginController extends Controller
 
     private function completeLogin(Request $request, User $user)
     {
+        $registration = TenantRegistration::query()->whereRaw('lower(email) = ?', [strtolower($user->email)])->where('emailVerified', false)->whereNull('phoneVerifiedAt')->first();
+        if ($registration && ! $user->isSuperAdmin) {
+            return $this->registrationHold($registration);
+        }
         $lastSeenAt = $user->lastLoginAt;
         $user->forceFill(['lastLoginAt' => now()])->save();
         Auth::login($user);

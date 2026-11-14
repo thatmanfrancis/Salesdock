@@ -14,7 +14,7 @@ class EnsureReviewer
         $user?->loadMissing('role');
         $role = $user?->role?->role;
 
-        if (! $user || (! $user->isSuperAdmin && ! in_array($role, ['ADMIN', 'SUPER_ADMIN'], true))) {
+        if (! $user || (! $user->isSuperAdmin && $role !== 'SUPER_ADMIN')) {
             abort(403);
         }
 

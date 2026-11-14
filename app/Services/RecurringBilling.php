@@ -22,7 +22,7 @@ use Throwable;
 /** @phpstan-import-type Pricing from SubscriptionPricing */
 class RecurringBilling
 {
-    public const TERMS_VERSION = '2026-11-02.2';
+    public const TERMS_VERSION = '2026-11-02.3';
 
     public function __construct(private PaymentManager $payments) {}
 
@@ -62,14 +62,14 @@ class RecurringBilling
     }
 
     /** @param Pricing|null $pricing */
-    public static function consentText(float $amount, string $cycle, ?array $pricing = null): string
+    public static function consentText(float $amount, string $cycle, ?array $pricing = null, bool $includesCurrentPayment = true): string
     {
         $interval = match ($cycle) {
             'QUARTERLY' => 'three months', 'ANNUALLY' => 'year', default => 'month'
         };
 
         $schedule = $pricing && $pricing['introRemaining'] > 0
-            ? SubscriptionPricing::description($pricing)
+            ? SubscriptionPricing::description($pricing, $includesCurrentPayment)
             : 'NGN '.number_format($amount, 2, '.', '').' every '.$interval.'.';
 
         return 'I am authorised to use this card for this business. I authorise The Town Growers Hub Ltd (SalesDock) to charge '.$schedule.' Renewals fall on my subscription renewal date until I cancel in Billing. This authorises software subscription payments only, not debits from my collection bank account. Only the disclosed discount expiry is authorised; other price or plan changes require fresh approval. No repeated automatic charge attempts are authorised. I accept the Recurring Card Payment Authorisation, version '.self::TERMS_VERSION.'.';
@@ -78,6 +78,104 @@ class RecurringBilling
     public function fingerprint(string $provider): string
     {
         return hash('sha256', PlatformSetting::payment()[$provider]['secret_key']);
+    }
+
+    /** @return array{available: bool, reason?: string, invoice?: BillingInvoice, pricing?: array<string, mixed>, amount?: float, token?: string} */
+    public function renewalSetup(Subscription $subscription): array
+    {
+        if (! $this->supportsCycle($subscription->billingCycle)) {
+            return ['available' => false, 'reason' => 'Automatic renewal is not available for the current payment provider or billing interval. You can still renew by card manually.'];
+        }
+        if ($subscription->status !== 'ACTIVE' || ! $subscription->currentPeriodEnd?->isFuture()) {
+            return ['available' => false, 'reason' => 'Pay for a subscription by card first. You can enable automatic renewal during checkout or return here after payment.'];
+        }
+        if ($this->hasUncertainRenewal($subscription->tenantId)) {
+            return ['available' => false, 'reason' => 'A renewal payment is awaiting confirmation. Wait for its result before enabling automatic renewal.'];
+        }
+        $subscription->loadMissing('plan');
+        if (! $subscription->plan?->isActive) {
+            return ['available' => false, 'reason' => 'Choose an available plan before enabling automatic renewal.'];
+        }
+        $provider = $this->payments->active()->name();
+        $invoice = BillingInvoice::query()->where('tenantId', $subscription->tenantId)->where('subscriptionId', $subscription->id)
+            ->where('status', 'PAID')->where('gateway', strtoupper($provider))->where('billingCycle', $subscription->billingCycle)
+            ->where('periodStart', $subscription->currentPeriodStart)->where('periodEnd', $subscription->currentPeriodEnd)
+            ->latest('paidAt')->first();
+        if (! $invoice) {
+            return ['available' => false, 'reason' => 'No card payment for this paid period is available with the current provider. Enable automatic renewal at your next card checkout.'];
+        }
+        if (($invoice->billingMetadata['paymentMethod'] ?? null) === 'TRANSFER') {
+            return ['available' => false, 'reason' => 'Your previous subscription payment was a bank transfer, so there is no saved card for automatic renewal. Your paid access is unchanged. Renew by card when this paid period ends and opt in at checkout; you do not need to pay again now.'];
+        }
+        $pricing = SubscriptionPricing::quote($subscription->plan, $subscription->billingCycle, $subscription->tenantId);
+        $amount = SubscriptionPricing::amount($pricing);
+        if ($amount <= 0) {
+            return ['available' => false, 'reason' => 'This plan is not available on the current billing interval. Choose another plan or interval.'];
+        }
+        $token = hash_hmac('sha256', json_encode([$subscription->id, $subscription->planId, $subscription->currentPeriodEnd->toISOString(),
+            $subscription->autoRenew, $subscription->recurringConsent['revokedAt'] ?? null,
+            $invoice->id, $invoice->gatewayRef, $pricing, $provider, $this->fingerprint($provider)], JSON_THROW_ON_ERROR), (string) config('app.key'));
+
+        return ['available' => true, 'invoice' => $invoice, 'pricing' => $pricing, 'amount' => $amount, 'token' => $token];
+    }
+
+    public function enable(Subscription $subscription, Request $request): void
+    {
+        abort_unless($this->canAuthorize($request->user(), $subscription->tenantId), 403);
+        $data = $request->validate(['authorizationVersion' => ['required', 'in:'.self::TERMS_VERSION],
+            'acceptRenewal' => ['required', 'accepted'], 'setupToken' => ['required', 'string']]);
+        $setup = $this->renewalSetup($subscription->fresh());
+        if (! $setup['available'] || ! hash_equals($setup['token'], $data['setupToken'])) {
+            throw ValidationException::withMessages(['autoRenew' => $setup['reason'] ?? 'Your billing details changed. Reload Billing and review the current amount and date.']);
+        }
+        $invoice = $setup['invoice'];
+        $gateway = $this->payments->active();
+        try {
+            $payment = ! empty($invoice->billingMetadata['attemptReference'])
+                ? $gateway->verifyByReference($invoice->billingMetadata['attemptReference'])
+                : $gateway->verifyTransaction($invoice->gatewayRef);
+        } catch (Throwable) {
+            throw ValidationException::withMessages(['autoRenew' => 'We could not verify your previous subscription payment with the provider. Nothing was charged and your paid access is unchanged. If you paid by transfer, there is no saved card: renew by card when your paid period ends and opt in then. Otherwise, try again later or contact support.']);
+        }
+        if ($gateway->confirms($payment, $invoice->invoiceNumber, (float) $invoice->amount)
+            && (string) ($payment['id'] ?? '') === $invoice->gatewayRef
+            && abs((float) ($payment['amount'] ?? 0) - (float) $invoice->amount) < 0.009
+            && ($payment['method'] ?? '') === 'TRANSFER') {
+            $invoice->forceFill(['billingMetadata' => array_merge($invoice->billingMetadata ?? [], ['paymentMethod' => 'TRANSFER'])])->save();
+            throw ValidationException::withMessages(['autoRenew' => 'Your previous subscription was paid by bank transfer. That payment remains valid, but it cannot provide a saved card for automatic renewal. Renew by card when your paid period ends and opt in at checkout. Nothing was charged today.']);
+        }
+        $authorization = $payment['recurring'] ?? [];
+        $authorization['acquiredAt'] = $invoice->paidAt?->toISOString() ?? $payment['created_at'] ?? '2000-01-01';
+        if (! $gateway->confirms($payment, $invoice->invoiceNumber, (float) $invoice->amount)
+            || (string) ($payment['id'] ?? '') !== $invoice->gatewayRef || ($payment['method'] ?? '') !== 'CARD'
+            || abs((float) ($payment['amount'] ?? 0) - (float) $invoice->amount) > 0.009
+            || empty($authorization['token']) || ! filter_var($authorization['email'] ?? '', FILTER_VALIDATE_EMAIL)
+            || $this->authorizationExpired($authorization, $gateway->name())) {
+            throw ValidationException::withMessages(['autoRenew' => 'That payment does not provide a valid reusable card authorisation. Automatic renewal remains off. Opt in at your next card checkout.']);
+        }
+        DB::transaction(function () use ($subscription, $request, $setup, $gateway, $authorization, $data): void {
+            $invoice = BillingInvoice::query()->lockForUpdate()->findOrFail($setup['invoice']->id);
+            $locked = Subscription::query()->lockForUpdate()->findOrFail($subscription->id);
+            $current = $this->renewalSetup($locked);
+            if (! $current['available'] || ! hash_equals($current['token'], $data['setupToken'])) {
+                throw ValidationException::withMessages(['autoRenew' => 'Your billing details changed. Reload Billing before enabling automatic renewal.']);
+            }
+            $consent = ['version' => self::TERMS_VERSION, 'text' => self::consentText($setup['amount'], $locked->billingCycle, $setup['pricing'], false),
+                'acceptedAt' => now()->toISOString(), 'userId' => $request->user()->id, 'ip' => $request->ip(),
+                'userAgent' => mb_substr((string) $request->userAgent(), 0, 255), 'amount' => (string) $setup['amount'], 'currency' => 'NGN',
+                'cycle' => $locked->billingCycle, 'provider' => $gateway->name(), 'fingerprint' => $this->fingerprint($gateway->name()),
+                'pricing' => $setup['pricing'], 'invoiceId' => $setup['invoice']->id, 'billingDay' => $locked->recurringConsent['billingDay'] ?? $locked->currentPeriodStart->day,
+                'adminCancellationVersion' => $locked->recurringConsent['adminCancellationVersion'] ?? null,
+                'firstRenewalAt' => $locked->currentPeriodEnd->toISOString(),
+                'card' => array_intersect_key($authorization, array_flip(['last4', 'brand', 'expires']))];
+            $locked->forceFill(['autoRenew' => true, 'recurringProvider' => $gateway->name(), 'recurringAuthorization' => $authorization,
+                'recurringAmount' => $setup['amount'], 'recurringConsent' => $consent, 'billingPricing' => $setup['pricing'],
+                'recurringRemindedAt' => null, 'autoRenewCancelledAt' => null])->save();
+            $metadata = $invoice->billingMetadata ?? [];
+            $metadata['renewalAuthorizations'][] = $consent;
+            $invoice->forceFill(['billingMetadata' => $metadata])->save();
+            $this->notice($locked, 'AUTO_RENEW_ENABLED', 'Automatic renewal is enabled. Your next software payment is NGN '.number_format($setup['amount'], 2).' on '.$locked->currentPeriodEnd->timezone('Africa/Lagos')->format('d M Y').'. Nothing was charged today.');
+        });
     }
 
     public function hasUncertainRenewal(string $tenantId): bool
@@ -105,6 +203,12 @@ class RecurringBilling
                 throw new RuntimeException('A payment is already complete or an automatic renewal is awaiting confirmation. Check Billing before paying again.');
             }
             $metadata = $invoice->billingMetadata ?? [];
+            $currentSubscription = Subscription::query()->where('tenantId', $invoice->tenantId)->first();
+            $adminCancellationVersion = $currentSubscription?->recurringConsent['adminCancellationVersion'] ?? null;
+            if (isset($metadata['checkoutState']) && $adminCancellationVersion
+                && ($metadata['adminCancellationVersion'] ?? null) !== $adminCancellationVersion) {
+                throw new RuntimeException('This checkout predates an admin cancellation. Choose a plan in Billing to open a new checkout.');
+            }
             if (($metadata['checkoutState'] ?? '') === 'READY' && ! empty($metadata['checkoutUrl'])) {
                 return $metadata['checkoutUrl'];
             }
@@ -121,6 +225,7 @@ class RecurringBilling
             $email = $request->user()?->tenantId === $tenant->id ? $request->user()->email : $tenant->email;
             $metadata = array_merge($metadata, [
                 'kind' => 'manual', 'cardOnly' => true, 'provider' => $gateway->name(),
+                'adminCancellationVersion' => $adminCancellationVersion,
                 'planId' => $metadata['planId'] ?? $invoice->gatewayRef,
                 'pricing' => $pricing,
                 'baseSubscription' => $subscription ? [$subscription->planId, $subscription->currentPeriodStart?->toISOString(), $subscription->currentPeriodEnd?->toISOString()] : null,
@@ -134,6 +239,7 @@ class RecurringBilling
                     'amount' => (string) $invoice->amount, 'currency' => 'NGN', 'cycle' => $invoice->billingCycle,
                     'provider' => $gateway->name(), 'fingerprint' => $this->fingerprint($gateway->name()),
                     'invoiceId' => $invoice->id,
+                    'adminCancellationVersion' => $adminCancellationVersion,
                     'billingDay' => ($invoice->periodStart ?? now())->day,
                 ] : null,
             ]);
@@ -263,6 +369,7 @@ class RecurringBilling
                     'periodEnd' => self::periodEnd($locked->currentPeriodEnd, $locked->billingCycle, $locked->recurringConsent['billingDay'] ?? null),
                     'dueDate' => $locked->currentPeriodEnd,
                     'billingMetadata' => ['kind' => 'automatic', 'cardOnly' => true, 'provider' => $locked->recurringProvider,
+                        'adminCancellationVersion' => $locked->recurringConsent['adminCancellationVersion'] ?? null,
                         'pricing' => $locked->billingPricing ?? SubscriptionPricing::forInvoice(new BillingInvoice(['amount' => $locked->recurringAmount, 'billingCycle' => $locked->billingCycle, 'gatewayRef' => $locked->planId])),
                         'planId' => $locked->planId, 'chargeState' => 'STARTING', 'consent' => $locked->recurringConsent],
                 ]);

@@ -25,7 +25,7 @@
 
 @section('content')
     <article class="legal">
-        <p class="updated">Last updated: 2 November 2026</p>
+        <p class="updated">Last updated: 3 November 2026</p>
 
         <nav class="toc">
             <strong>On this page</strong>
@@ -47,13 +47,13 @@
         </ul>
 
         <h2 id="trial">3. Free trial</h2>
-        <p>New shops get a 30-day free trial with every feature unlocked. No card is needed to start. When the trial ends you must choose a paid plan to keep using the dashboard. There is no free plan.</p>
+        <p>New shops get a 30-day free trial with every feature unlocked. No card is needed to start. After the trial or paid access ends, Basic free access keeps POS, basic inventory, customer records, sales history and refunds available. Advanced features and the online storefront require a paid subscription. Account suspension is separate and may restrict access.</p>
 
         <h2 id="billing">4. Plans and billing</h2>
         <ul>
             <li>Plans are priced in Naira and billed monthly, quarterly or annually in advance. Software subscription checkout is by card through the payment provider identified at checkout, currently Flutterwave or Paystack.</li>
             <li>The features and limits of each plan are shown on our website and on your Billing page.</li>
-            <li>You may renew manually from Billing. Where available, the signed-in shop owner may separately opt in to automatic card renewal for the exact amount and interval shown at checkout. The option is unchecked by default. Connecting a merchant collection bank account does not authorise subscription debits.</li>
+            <li>You may renew manually from Billing. Where available, the signed-in shop owner may separately opt in to automatic card renewal at checkout, or enable it in Billing by approving the displayed next amount, date and schedule and reverifying the card used for the current paid subscription. Enabling it in Billing does not take a payment today. Approval boxes are unchecked by default. Connecting a merchant collection bank account does not authorise subscription debits.</li>
             <li>Automatic renewal requires a reusable authorisation confirmed by the payment provider and is governed by our <a href="{{ route('recurring.terms') }}">Recurring Card Payment Authorisation</a>. We send a renewal reminder through the dashboard and attempt email delivery before automatic billing. We submit at most one automatic charge for a billing period and reconcile uncertain results before allowing another payment.</li>
             <li>You can turn off automatic renewal in Billing at any time. This stops future submissions and preserves the paid period. A charge already submitted may still complete. An expired authorisation, provider change, unavailable recurring service or changed price may pause automatic renewal and require fresh approval.</li>
             <li>An introductory offer specifies the discounted amount, how many paid billing periods it covers and the regular amount afterwards. Automatic-renewal approval covers only that disclosed schedule. Introductory offers apply to a shop's first paid subscription purchase and do not restart on a plan change. Other price changes receive at least 30 days' notice and require fresh authorisation before automatic collection.</li>
@@ -62,7 +62,7 @@
         </ul>
 
         <h2 id="ended">5. When a plan ends or payment is missed</h2>
-        <p>If a renewal is not paid, your account enters a 7-day grace period and keeps working. If payment is still not received after the grace period, the subscription ends and the dashboard is locked until the shop owner chooses a plan. Your data is kept while the account exists, so everything is still there when you pay.</p>
+        <p>If a renewal is not paid, your account enters a 7-day grace period. Afterwards, paid features end and Basic free access remains available. Cancelling a paid subscription also returns the shop to Basic free access and stops future automatic renewal submissions. Existing data and invoices are retained. A new paid subscription restores the features of the selected plan.</p>
 
         <h2 id="use">6. Acceptable use</h2>
         <p>You must not use SalesDock to:</p>

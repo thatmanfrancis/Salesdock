@@ -382,7 +382,7 @@ class StorefrontController extends Controller
 
     public function order(Request $request, string $slug, string $ref, PaymentManager $payments, SaleRecorder $sales, BillingService $billing): View
     {
-        [$tenant, $config] = $this->store($slug);
+        [$tenant, $config] = $this->store($slug, true);
         $order = Order::query()->where('tenantId', $tenant->id)->where('paymentRef', $ref)->firstOrFail();
         $gateway = $payments->active();
 
@@ -446,9 +446,11 @@ class StorefrontController extends Controller
     /**
      * @return array{0: Tenant, 1: StorefrontConfig}
      */
-    private function store(string $slug): array
+    private function store(string $slug, bool $existingOrder = false): array
     {
         $tenant = Tenant::query()->where('slug', $slug)->where('isActive', true)->firstOrFail();
+        $subscription = $tenant->subscription;
+        abort_if(! $existingOrder && $subscription && ! $subscription->hasPlanAccess(), 404);
         $config = StorefrontConfig::query()->where('tenantId', $tenant->id)->where('isPublic', true)->firstOrFail();
 
         return [$tenant, $config];

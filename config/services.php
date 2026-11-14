@@ -48,6 +48,17 @@ return [
     /*
     | Zoho SalesIQ WhatsApp. Prefer Admin → Settings → WhatsApp; env is bootstrap only.
     */
+    'meta_whatsapp' => [
+        'enabled' => (bool) env('META_WHATSAPP_ENABLED', false),
+        'api_version' => env('META_WHATSAPP_API_VERSION', 'v27.0'),
+        'phone_number_id' => env('META_WHATSAPP_PHONE_NUMBER_ID'),
+        'access_token' => env('META_WHATSAPP_ACCESS_TOKEN'),
+        'language' => env('META_WHATSAPP_LANGUAGE', 'en_US'),
+        'restock_template' => env('META_WHATSAPP_RESTOCK_TEMPLATE'),
+        'purchase_order_template' => env('META_WHATSAPP_PURCHASE_ORDER_TEMPLATE'),
+        'otp_template' => env('META_WHATSAPP_OTP_TEMPLATE'),
+    ],
+
     'zoho_whatsapp' => [
         'enabled' => (bool) env('ZOHO_WHATSAPP_ENABLED', false),
         'accounts_url' => env('ZOHO_ACCOUNTS_URL', 'https://accounts.zoho.com'),

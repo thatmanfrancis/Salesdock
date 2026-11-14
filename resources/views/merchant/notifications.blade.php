@@ -31,6 +31,10 @@
                         <strong>{{ $note->title }}</strong>
                     @endif
                     <p>{{ $note->message }}</p>
+                    @if ((($subscription ?? null)?->onTrial() && $note->type === 'SUBSCRIPTION_EXPIRING' && $note->title === 'Free trial ends soon')
+                        || (($subscription ?? null)?->hasEndedFreeTrial() && $note->type === 'SUBSCRIPTION_EXPIRED' && $note->title === 'Free trial ended'))
+                        <a href="{{ route('billing') }}">Select a subscription plan</a>
+                    @endif
                     @unless ($note->isRead)
                         <form method="post" action="{{ route('notifications.read-one', $note) }}">
                             @csrf

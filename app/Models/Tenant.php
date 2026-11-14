@@ -94,6 +94,8 @@ class Tenant extends Model
             'requireVerifiedPayments' => 'boolean',
             'posPaymentMethods' => 'array',
             'restockDrafts' => 'boolean',
+            'restockAlertEmail' => 'boolean',
+            'restockAlertWhatsApp' => 'boolean',
             'approvedAt' => 'datetime',
             'profileCompletedAt' => 'datetime',
             'deletedAt' => 'datetime',

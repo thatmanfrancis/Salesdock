@@ -35,7 +35,7 @@ class ShareWorkspace
         $features = $subscription?->features() ?? [];
         $status = $subscription?->status;
         $ended = (bool) $subscription?->hasEnded();
-        $blocked = $ended || in_array($status, ['SUSPENDED', 'CANCELLED'], true);
+        $blocked = ! ($subscription?->usesBasicAccess() ?? false) && ($ended || in_array($status, ['SUSPENDED', 'CANCELLED'], true));
         $allowedWhileBlocked = $request->routeIs('suspended', 'logout') || $request->is('billing', 'billing/*', 'support', 'support/*');
 
         if ($user && $role !== 'SUPER_ADMIN' && $blocked && ! $allowedWhileBlocked) {
@@ -64,6 +64,9 @@ class ShareWorkspace
         if ($user && ! in_array($role, ['SUPER_ADMIN', 'CLIENT'], true) && ! PlanFeatures::covers($path, $features)) {
             return redirect()->route('not-eligible');
         }
+        if ($user && ! in_array($role, ['SUPER_ADMIN', 'CLIENT'], true) && $subscription?->usesBasicAccess() && ! PlanFeatures::basicPath($path)) {
+            return redirect()->route('not-eligible');
+        }
 
         $needsPlan = $role !== 'SUPER_ADMIN' && $status === null;
         $onBilling = $request->is('billing', 'billing/*');
@@ -86,13 +89,19 @@ class ShareWorkspace
 
     private function shared(string $role, string $roleName, array $permissions, $subscription, bool $paywallLocked, ?array $bell, array $features): array
     {
+        $nav = Nav::items($role, $permissions, $roleName, $features);
+        if ($subscription && ! $subscription->hasPlanAccess() && ! in_array($role, ['SUPER_ADMIN', 'CLIENT'], true)) {
+            $nav = array_values(array_filter($nav, fn (array $item): bool => $subscription->usesBasicAccess()
+                ? PlanFeatures::basicPath($item['path']) : in_array($item['path'], ['/billing', '/support'], true)));
+        }
+
         return [
             'role' => $role,
             'roleName' => $roleName,
             'permissions' => $permissions,
             'subscription' => $subscription,
             'paywallLocked' => $paywallLocked,
-            'nav' => Nav::items($role, $permissions, $roleName, $features),
+            'nav' => $nav,
             'opensStorefront' => PlanFeatures::includes($features, ['Storefront / Online Store', 'White-label Storefront']),
             'bell' => $bell,
         ];

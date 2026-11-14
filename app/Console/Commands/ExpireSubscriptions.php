@@ -2,7 +2,6 @@
 
 namespace App\Console\Commands;
 
-use App\Models\BillingInvoice;
 use App\Models\Notification;
 use App\Models\Subscription;
 use App\Models\Tenant;
@@ -33,7 +32,7 @@ class ExpireSubscriptions extends Command
             $gracePeriodEndsAt = $sub->currentPeriodEnd->copy()->addDays($sub->gracePeriodDays ?? 7);
 
             $sub->forceFill([
-                'status'            => 'PAST_DUE',
+                'status' => 'PAST_DUE',
                 'gracePeriodEndsAt' => $gracePeriodEndsAt,
             ])->save();
 
@@ -46,11 +45,11 @@ class ExpireSubscriptions extends Command
 
             // In-app notification
             Notification::query()->create([
-                'tenantId'  => $tenant->id,
-                'type'      => 'SUBSCRIPTION_EXPIRING',
-                'title'     => 'Subscription expired',
-                'message'   => 'Your plan has expired. You have ' . $daysLeft . ' day' . ($daysLeft === 1 ? '' : 's') . ' to renew before your dashboard is locked.',
-                'isRead'    => false,
+                'tenantId' => $tenant->id,
+                'type' => 'SUBSCRIPTION_EXPIRING',
+                'title' => 'Subscription expired',
+                'message' => 'Your plan has expired. You have '.$daysLeft.' day'.($daysLeft === 1 ? '' : 's').' to renew before paid features end. Basic free selling tools remain available afterwards.',
+                'isRead' => false,
                 'createdAt' => now(),
             ]);
 
@@ -62,24 +61,24 @@ class ExpireSubscriptions extends Command
 
             if ($owner?->email) {
                 AuthMail::send($owner->email, $owner->name, 'Your SalesDock subscription has expired', [
-                    'preheader'  => 'Renew within ' . $daysLeft . ' days to keep full access.',
-                    'heading'    => 'Subscription expired',
-                    'kicker'     => $tenant->name,
+                    'preheader' => 'Renew within '.$daysLeft.' days to keep full access.',
+                    'heading' => 'Subscription expired',
+                    'kicker' => $tenant->name,
                     'paragraphs' => [
-                        'Hi <strong style="color:#111827;">' . e($owner->name) . '</strong>, your SalesDock subscription for <strong>' . e($tenant->name) . '</strong> has expired.',
-                        'You have <strong>' . $daysLeft . ' day' . ($daysLeft === 1 ? '' : 's') . '</strong> to renew. After that the dashboard is locked until a plan is paid for. Your data stays safe throughout.',
+                        'Hi <strong style="color:#111827;">'.e($owner->name).'</strong>, your SalesDock subscription for <strong>'.e($tenant->name).'</strong> has expired.',
+                        'You have <strong>'.$daysLeft.' day'.($daysLeft === 1 ? '' : 's').'</strong> to renew your paid features. Afterwards Basic free access keeps POS and basic shop tools available. Your data stays safe throughout.',
                     ],
-                    'url'        => route('billing'),
-                    'label'      => 'Renew now',
-                    'note'       => 'If you have already paid, please ignore this message — your subscription will update shortly.',
+                    'url' => route('billing'),
+                    'label' => 'Renew now',
+                    'note' => 'If you have already paid, please ignore this message — your subscription will update shortly.',
                 ]);
             }
 
             $moved++;
-            $this->line('Marked PAST_DUE: ' . $tenant->name . ' (grace ends ' . $gracePeriodEndsAt->format('d M Y') . ')');
+            $this->line('Marked PAST_DUE: '.$tenant->name.' (grace ends '.$gracePeriodEndsAt->format('d M Y').')');
         }
 
-        $this->info($moved . ' subscription(s) moved to PAST_DUE.');
+        $this->info($moved.' subscription(s) moved to PAST_DUE.');
 
         return self::SUCCESS;
     }

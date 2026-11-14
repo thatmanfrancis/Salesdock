@@ -30,6 +30,8 @@ use App\Services\TenantEraser;
 use App\Support\AuthMail;
 use App\Support\CatalogueCategories;
 use App\Support\CatalogueCsv;
+use App\Support\Password;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -296,6 +298,54 @@ class PlatformController extends MerchantController
         };
 
         return back()->with('status', $message);
+    }
+
+    public function cancelSubscription(Request $request, Tenant $tenant): RedirectResponse
+    {
+        $admin = $this->user();
+        abort_unless($admin->isSuperAdmin || $admin->loadMissing('role')->role?->role === 'SUPER_ADMIN', 403);
+        $data = $request->validate([
+            'confirmation' => ['required', 'string', Rule::in(['DELETE '.$tenant->name])],
+            'password' => ['required', 'string'],
+            'final_confirmation' => ['required', 'accepted'],
+        ], ['confirmation.in' => 'Type DELETE followed by the exact merchant name to confirm cancellation.']);
+        if (! Password::check($data['password'], $admin->passwordHash)) {
+            throw ValidationException::withMessages(['password' => 'The admin login password is incorrect.']);
+        }
+        DB::transaction(function () use ($request, $tenant, $admin): void {
+            $subscription = Subscription::query()->where('tenantId', $tenant->id)->lockForUpdate()->firstOrFail();
+            if ($subscription->status === 'CANCELLED' && ! $subscription->autoRenew && ! $subscription->recurringAuthorization
+                && ! empty($subscription->recurringConsent['adminCancellationVersion'])) {
+                return;
+            }
+            $previousStatus = $subscription->status;
+            $wasAutoRenew = $subscription->autoRenew;
+            $consent = $subscription->recurringConsent ?? [];
+            $consent['revokedAt'] = now()->toISOString();
+            $consent['adminCancellationVersion'] = (string) Str::uuid();
+            $subscription->forceFill(['status' => 'CANCELLED', 'autoRenew' => false, 'recurringAuthorization' => null,
+                'recurringAmount' => null, 'recurringRemindedAt' => null, 'recurringConsent' => $consent,
+                'autoRenewCancelledAt' => now(), 'cancelledAt' => now(), 'cancelAtPeriodEnd' => false,
+                'cancellationReason' => 'Cancelled by SalesDock platform admin', 'nextBillingDate' => null,
+                'gracePeriodEndsAt' => now()])->save();
+            AuditLog::query()->create(['tenantId' => $tenant->id, 'userId' => $admin->id, 'action' => 'SETTINGS_UPDATED',
+                'details' => ['type' => 'SUBSCRIPTION_CANCELLED_BY_ADMIN', 'subscriptionId' => $subscription->id,
+                    'merchantName' => $tenant->name, 'previousStatus' => $previousStatus, 'autoRenewWasEnabled' => $wasAutoRenew,
+                    'adminId' => $admin->id, 'adminName' => $admin->name], 'ipAddress' => $request->ip(), 'timestamp' => now()]);
+            Notification::query()->create(['tenantId' => $tenant->id, 'type' => 'SYSTEM', 'title' => 'Subscription cancelled by SalesDock',
+                'message' => 'Your paid subscription was cancelled. Basic POS, inventory and customer tools remain available. Automatic renewal is off. Upgrade in Billing for advanced features.', 'createdAt' => now()]);
+            $owner = User::query()->where('tenantId', $tenant->id)->whereHas('role', fn ($query) => $query->where('name', 'Owner'))->first();
+            if ($owner) {
+                DB::afterCommit(fn () => AuthMail::send($owner->email, $owner->name, 'SalesDock subscription cancelled', [
+                    'heading' => 'Your subscription was cancelled',
+                    'paragraphs' => ['Your paid subscription was cancelled. You can keep selling with Basic free access: POS, basic inventory, customers, sales history and refunds. Advanced features and the online storefront require a paid plan. Automatic renewal is off. Your data and invoices are retained. A charge already submitted may still complete and need review; no refund is issued automatically.'],
+                    'url' => route('billing'), 'label' => 'Open Billing', 'note' => 'Contact support if you need help with this cancellation.',
+                ]));
+            }
+        });
+
+        return back()->with('status', 'Paid subscription cancelled. The merchant can keep selling on Basic free access. Automatic renewal is off and data is retained.')
+            ->with('subscription_cancelled', ['merchantName' => $tenant->name]);
     }
 
     public function overrideSubscription(Request $request, Tenant $tenant)

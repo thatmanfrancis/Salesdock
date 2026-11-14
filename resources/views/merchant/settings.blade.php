@@ -127,10 +127,12 @@
                             @else
                                 <p class="hint">Connect your collection account before enabling provider confirmation.</p>
                             @endif
+                            @if ($canChangePayoutAccount)
                             <x-ui.select name="bankCode" label="Collection bank" :value="old('bankCode', $store->bankCode)" :options="['' => 'Choose your bank'] + ($banks ?? [])" searchable />
                             <label><span>Account number</span><input name="bankAccount" inputmode="numeric" maxlength="10" value="{{ old('bankAccount', $store->bankAccount) }}" autocomplete="off"></label>
                             <label><span>Account name</span><input name="accountName" value="{{ $store->accountName }}" readonly placeholder="Enter your bank and 10-digit account number"></label>
                             <p class="hint" role="status" aria-live="polite" data-account-status>Account names are confirmed automatically by the payment provider.</p>
+                            @endif
                             <div class="ui-modal-actions"><button type="submit" data-loading="Saving…"><span data-label>Save payment settings</span></button></div>
                         </form>
                     </section>
@@ -218,6 +220,7 @@
                             @if ($payoutConnected ?? false)
                                 <p class="muted">Payouts are connected.</p>
                             @endif
+                            @if ($canChangePayoutAccount)
                             <div class="settings-grid">
                                 <div class="wide">
                                     <x-ui.select name="bankCode" label="Bank" :value="old('bankCode', $store->bankCode)" :options="['' => 'Choose your bank'] + ($banks ?? [])" searchable required />
@@ -232,6 +235,7 @@
                                 </label>
                             </div>
                             <p class="hint" role="status" aria-live="polite" data-account-status>Account names are confirmed automatically by the payment provider.</p>
+                            @endif
                             <div class="ui-modal-actions">
                                 <button type="submit" data-loading="Saving…"><span data-label>Save</span></button>
                             </div>
@@ -312,6 +316,12 @@
                                 <span>Draft purchase orders when stock runs low</span>
                                 <input type="checkbox" name="restockDrafts" value="1" @checked($tenant->restockDrafts)>
                             </label>
+                            <input type="hidden" name="restockChannelsPresent" value="1">
+                            <fieldset>
+                                <legend>Low-stock alert channels</legend>
+                                <label class="switch"><span>Email alerts</span><input type="checkbox" name="restockAlertEmail" value="1" @checked($tenant->restockAlertEmail ?? true)></label>
+                                <label class="switch"><span>WhatsApp alerts</span><input type="checkbox" name="restockAlertWhatsApp" value="1" @checked($tenant->restockAlertWhatsApp ?? true)></label>
+                            </fieldset>
                             <div class="supplier-facts">
                                 <div><span>Suppliers switched on</span><strong>{{ $restock['suppliersOn'] }} of {{ $restock['suppliers'] }}</strong></div>
                                 <div><span>Products with a supplier</span><strong>{{ $restock['linkedProducts'] }}</strong></div>
@@ -445,7 +455,7 @@
             const savedAccount = @json((string) $store->bankAccount);
             const accountChanged = () => bank.value !== savedBank || number.value !== savedAccount;
             form.addEventListener('submit', (event) => {
-                if (savedAccount && accountChanged() && !form.querySelector('[data-payout-password-value]')?.value) {
+                if ((savedAccount || bank.value || number.value) && accountChanged() && !form.querySelector('[data-payout-password-value]')?.value) {
                     event.preventDefault();
                     openPasswordModal(form);
                 }

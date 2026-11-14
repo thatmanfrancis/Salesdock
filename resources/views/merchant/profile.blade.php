@@ -57,6 +57,15 @@
                             </div>
                         </form>
                     </section>
+                    @if ($needsRecoveryEmailConfirmation ?? false)
+                        <section class="card profile-narrow">
+                            <form method="post" action="{{ route('recovery-email.send') }}">
+                                @csrf
+                                <p>Confirm your email so you can reset your password if you forget it.</p>
+                                <button type="submit">Confirm recovery email</button>
+                            </form>
+                        </section>
+                    @endif
                 @elseif ($section === 'password')
                     <section class="card profile-narrow">
                         <form method="post" action="{{ route('profile.update') }}" data-busy>

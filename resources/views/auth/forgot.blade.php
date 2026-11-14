@@ -20,5 +20,6 @@
             </form>
             <a href="{{ route('login') }}" class="text-sm font-medium text-green-600">← Back to login</a>
         @endif
+        <p class="text-sm text-gray-500">Not verified yet? <a href="{{ route('register.verification') }}" class="font-semibold text-green-600 underline">Verify your account / resend code</a>. A password reset does not verify your signup.</p>
     </x-auth.shell>
 @endsection

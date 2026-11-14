@@ -17,7 +17,7 @@
                 <x-auth.submit label="Send a new link" loading="Sending..." />
             </form>
         @else
-            <a href="{{ route('register') }}" class="text-sm font-medium text-green-600">Try registering again</a>
+            <a href="{{ route('register.verification') }}" class="text-sm font-medium text-green-600">Request a new verification message</a>
         @endif
     </x-auth.shell>
 @endsection

@@ -149,10 +149,12 @@ class RestockWatcher
         ]);
 
         if ($isNew) {
-            if ($tenant->email) {
+            if ($tenant->email && ($tenant->restockAlertEmail ?? true)) {
                 $this->emailOwner($tenant, $supplier, $order, $product, $stockText);
             }
-            $this->notifyWhatsApp($tenant, $supplier, $order, $product, $stockText);
+            if ($tenant->restockAlertWhatsApp ?? true) {
+                $this->notifyWhatsApp($tenant, $supplier, $order, $product, $stockText);
+            }
         }
     }
 

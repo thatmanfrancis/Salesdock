@@ -6,6 +6,29 @@ use App\Models\Plan;
 
 class PlanFeatures
 {
+    /** @return list<string> */
+    public static function basic(): array
+    {
+        return ['POS Terminal', 'Basic Inventory', 'Order Management', 'Customer Records', 'Refund Management'];
+    }
+
+    public static function basicPath(string $path): bool
+    {
+        $path = '/'.ltrim($path, '/');
+        if (str_starts_with($path, '/inventory/purchase-orders')
+            || preg_match('#^/products/[^/]+/(transfer|promo|variants)(/|$)#', $path)) {
+            return false;
+        }
+        foreach (['/dashboard', '/pos', '/products', '/inventory', '/orders', '/customers', '/refunds', '/settings', '/profile',
+            '/billing', '/support', '/notifications', '/complete-profile', '/welcome-back', '/logout', '/not-eligible', '/unauthorized', '/suspended'] as $prefix) {
+            if ($path === $prefix || str_starts_with($path, $prefix.'/')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private const GATES = [
         '/pos' => ['POS Terminal'],
         '/orders' => ['Order Management'],

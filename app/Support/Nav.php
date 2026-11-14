@@ -100,7 +100,7 @@ class Nav
             'CASHIER' => ['/dashboard', '/pos', '/products', '/orders', '/notifications', '/support', '/profile', '/billing'],
             'SUPERVISOR' => ['/pos', '/dashboard', '/orders', '/products', '/customers', '/refunds', '/inventory', '/suppliers', '/promotions', '/staff', '/payroll', '/activity-logs', '/notifications', '/support', '/profile', '/billing'],
             'MANAGER' => ['/dashboard', '/orders', '/products', '/customers', '/inventory', '/suppliers', '/promotions', '/refunds', '/analytics', '/staff', '/branches', '/payroll', '/roles', '/settings', '/audit-logs', '/activity-logs', '/financials', '/expenses', '/notifications', '/support', '/profile', '/billing'],
-            'ADMIN' => ['/pos', '/dashboard', '/orders', '/products', '/customers', '/inventory', '/suppliers', '/promotions', '/refunds', '/analytics', '/staff', '/payroll', '/branches', '/roles', '/settings', '/audit-logs', '/activity-logs', '/financials', '/expenses', '/notifications', '/support', '/profile', '/billing', '/admin/registrations'],
+            'ADMIN' => ['/pos', '/dashboard', '/orders', '/products', '/customers', '/inventory', '/suppliers', '/promotions', '/refunds', '/analytics', '/staff', '/payroll', '/branches', '/roles', '/settings', '/audit-logs', '/activity-logs', '/financials', '/expenses', '/notifications', '/support', '/profile', '/billing'],
             'SUPER_ADMIN' => ['/admin', '/profile', '/notifications', '/dashboard', '/analytics', '/billing'],
         ][$role] ?? [];
 

@@ -583,6 +583,191 @@ class RecurringBillingTest extends TestCase
             && $request['subject'] === 'SalesDock renewal payment received');
     }
 
+    #[TestWith(['paystack'])]
+    #[TestWith(['flutterwave'])]
+    public function test_owner_can_enable_renewal_from_billing_without_another_payment(string $provider): void
+    {
+        [$owner, $invoice] = $this->shop($provider);
+        $this->fakeGateway();
+        $subscription = $this->activate($owner, $invoice, $provider, false);
+        $end = $subscription->currentPeriodEnd->toISOString();
+        $this->get(route('billing'))->assertOk()->assertSee('Off — turn on')->assertDontSee('On — turn off')->assertSee('Confirm and enable');
+        $payload = $this->enablePayload($subscription);
+
+        $this->post(route('billing.auto-renew.store'), $payload)->assertRedirect(route('billing'))->assertSessionHasNoErrors();
+
+        $this->assertTrue($subscription->fresh()->autoRenew);
+        $this->assertSame('1000.00', $subscription->fresh()->recurringAmount);
+        $this->assertSame($end, $subscription->fresh()->currentPeriodEnd->toISOString());
+        $this->assertSame(1, BillingInvoice::query()->count());
+        $this->assertCount(1, $invoice->fresh()->billingMetadata['renewalAuthorizations']);
+        $this->assertStringNotContainsString('saved-token', json_encode($invoice->fresh()->billingMetadata));
+        $this->get(route('billing'))->assertOk()->assertSee('On — turn off')->assertDontSee('Off — turn on');
+        $this->get(route('billing.authorization', $invoice))->assertOk()->assertSee('First authorised renewal:')->assertSee('4242');
+        $this->assertSame(1, collect(Http::recorded())->filter(fn (array $record): bool => $record[0]->method() === 'POST')->count());
+        Http::assertNotSent(fn (ClientRequest $request): bool => $this->isCharge($request));
+    }
+
+    #[TestWith(['card'])]
+    #[TestWith(['provider'])]
+    #[TestWith(['price'])]
+    #[TestWith(['date'])]
+    public function test_renewal_enable_requires_a_reusable_card_and_current_approved_details(string $change): void
+    {
+        [$owner, $invoice] = $this->shop();
+        $this->fakeGateway();
+        $subscription = $this->activate($owner, $invoice, 'paystack', false);
+        $payload = $this->enablePayload($subscription);
+        match ($change) {
+            'card' => $this->reusable = false,
+            'provider' => PlatformSetting::writePayment(['provider' => 'flutterwave', 'platform_split' => 0, 'recurring_enabled' => true]),
+            'price' => Plan::query()->whereKey($subscription->planId)->update(['monthlyPrice' => 15000]),
+            'date' => $subscription->update(['currentPeriodEnd' => now()->addMonths(2)]),
+        };
+
+        $this->postJson(route('billing.auto-renew.store'), $payload)->assertUnprocessable()->assertJsonValidationErrors('autoRenew');
+
+        $this->assertFalse($subscription->fresh()->autoRenew);
+        $this->assertNull($subscription->fresh()->recurringAuthorization);
+        Http::assertNotSent(fn (ClientRequest $request): bool => $this->isCharge($request));
+    }
+
+    public function test_billing_renewal_enable_requires_explicit_owner_consent(): void
+    {
+        [$owner, $invoice] = $this->shop();
+        $this->fakeGateway();
+        $subscription = $this->activate($owner, $invoice, 'paystack', false);
+        $payload = $this->enablePayload($subscription);
+        unset($payload['acceptRenewal']);
+        $this->postJson(route('billing.auto-renew.store'), $payload)->assertUnprocessable()->assertJsonValidationErrors('acceptRenewal');
+        $other = new User(['id' => 'other', 'tenantId' => 'another-shop', 'name' => 'Other']);
+        $other->setRelation('role', new Role(['name' => 'Cashier']));
+        $this->actingAs($other)->postJson(route('billing.auto-renew.store'), $payload)->assertForbidden();
+
+        $this->assertFalse($subscription->fresh()->autoRenew);
+    }
+
+    public function test_reenabling_after_cancellation_needs_fresh_consent_and_preserves_history(): void
+    {
+        [$owner, $invoice] = $this->shop();
+        $this->fakeGateway();
+        $subscription = $this->activate($owner, $invoice);
+        $oldConsent = $subscription->recurringConsent;
+        $this->delete(route('billing.auto-renew.destroy'))->assertRedirect();
+        $this->travel(1)->minutes();
+        $this->post(route('billing.auto-renew.store'), $this->enablePayload($subscription->fresh()))->assertRedirect()->assertSessionHasNoErrors();
+
+        $this->assertTrue($subscription->fresh()->autoRenew);
+        $this->assertNotSame($oldConsent['acceptedAt'], $subscription->fresh()->recurringConsent['acceptedAt']);
+        $this->assertSame($oldConsent, $invoice->fresh()->billingMetadata['consent']);
+        $this->get(route('billing.authorization', $invoice))->assertOk()->assertSee('Previous authorisation');
+        Http::assertNotSent(fn (ClientRequest $request): bool => $this->isCharge($request));
+    }
+
+    public function test_trial_reminder_and_expiry_send_one_notice_each_with_a_plan_link(): void
+    {
+        config(['services.zeptomail.key' => 'test-mail-key', 'services.zeptomail.from' => 'billing@example.test']);
+        Http::fake(['api.zeptomail.com/v1.1/email' => Http::response(['message' => 'Accepted'])]);
+        [$owner] = $this->shop();
+        $subscription = Subscription::query()->where('tenantId', $owner->tenantId)->firstOrFail();
+        $subscription->update(['trialEndsAt' => now()->addDays(3)]);
+
+        $this->actingAs($owner)->get(route('billing'))->assertOk()
+            ->assertSee('3 days left')->assertSee('Select a subscription plan');
+
+        $this->artisan('subscriptions:end-trials')->assertSuccessful();
+        $this->artisan('subscriptions:end-trials')->assertSuccessful();
+        $this->assertDatabaseCount('notifications', 1);
+        $this->assertDatabaseHas('notifications', ['tenantId' => $owner->tenantId, 'type' => 'SUBSCRIPTION_EXPIRING', 'message' => 'Your free trial has 3 days left and ends on 05 Nov 2026. Choose a paid plan to keep advanced features.']);
+        Http::assertSent(fn (ClientRequest $request): bool => str_contains($request->url(), 'api.zeptomail.com/')
+            && str_contains($request['subject'], '3 days left')
+            && str_contains($request['htmlbody'], 'Select a subscription plan'));
+
+        $this->travel(3)->days();
+        $this->artisan('subscriptions:end-trials')->assertSuccessful();
+        $this->artisan('subscriptions:end-trials')->assertSuccessful();
+        $this->assertDatabaseCount('notifications', 2);
+        $this->assertTrue($subscription->fresh()->hasEndedFreeTrial());
+        $this->assertDatabaseHas('notifications', ['tenantId' => $owner->tenantId, 'type' => 'SUBSCRIPTION_EXPIRED']);
+        $this->get(route('billing'))->assertOk()
+            ->assertSee('Your free trial has ended')->assertSee('Select a subscription plan');
+        Http::assertSent(fn (ClientRequest $request): bool => str_contains($request->url(), 'api.zeptomail.com/')
+            && str_contains($request['subject'], 'trial has ended')
+            && str_contains($request['htmlbody'], 'Select a subscription plan'));
+        $this->assertCount(2, Http::recorded(fn (ClientRequest $request): bool => str_contains($request->url(), 'api.zeptomail.com/')));
+    }
+
+    public function test_trial_billing_shows_disabled_off_state_instead_of_a_turn_off_button(): void
+    {
+        [$owner, $invoice] = $this->shop();
+        Http::preventStrayRequests();
+        $this->withoutMiddleware(ShareWorkspace::class)->actingAs($owner)->get(route('billing'))->assertOk()
+            ->assertSee('Off — turn on')->assertSee('Pay for a subscription by card first.')->assertDontSee('On — turn off')->assertDontSee('Withdraw pending renewal request');
+        Http::assertNothingSent();
+    }
+
+    public function test_legacy_subscription_invoice_cannot_be_settled_by_bank_transfer(): void
+    {
+        [$owner, $invoice] = $this->shop();
+        $this->fakeGateway();
+        $this->channel = 'bank_transfer';
+        $gateway = app(PaymentManager::class)->active();
+        $payment = $gateway->verifyByReference($invoice->invoiceNumber);
+
+        $this->assertNull(app(BillingService::class)->settlePayment($payment, $gateway, app(SaleRecorder::class)));
+        $this->assertSame('PENDING', $invoice->fresh()->status);
+    }
+
+    public function test_previous_transfer_payment_keeps_paid_access_without_enabling_or_charging_a_card(): void
+    {
+        [$owner, $invoice] = $this->shop();
+        $this->fakeGateway();
+        $subscription = $this->activate($owner, $invoice, 'paystack', false);
+        $metadata = $invoice->fresh()->billingMetadata;
+        unset($metadata['paymentMethod']);
+        $invoice->update(['billingMetadata' => $metadata]);
+        $end = $subscription->currentPeriodEnd->toISOString();
+        $payload = $this->enablePayload($subscription);
+        $this->channel = 'bank_transfer';
+
+        $this->postJson(route('billing.auto-renew.store'), $payload)->assertUnprocessable()->assertJsonValidationErrors('autoRenew');
+
+        $this->assertSame('TRANSFER', $invoice->fresh()->billingMetadata['paymentMethod']);
+        $this->assertSame('PAID', $invoice->fresh()->status);
+        $this->assertSame('ACTIVE', $subscription->fresh()->status);
+        $this->assertSame($end, $subscription->fresh()->currentPeriodEnd->toISOString());
+        $this->assertFalse($subscription->fresh()->autoRenew);
+        $this->assertNull($subscription->fresh()->recurringAuthorization);
+        $this->get(route('billing'))->assertOk()->assertSee('Your previous subscription payment was a bank transfer')->assertDontSee('Confirm and enable');
+        Http::assertNotSent(fn (ClientRequest $request): bool => $this->isCharge($request));
+    }
+
+    public function test_unavailable_legacy_payment_verification_does_not_assume_the_payment_was_a_transfer(): void
+    {
+        [$owner, $invoice] = $this->shop();
+        $this->fakeGateway();
+        $subscription = $this->activate($owner, $invoice, 'paystack', false);
+        $payload = $this->enablePayload($subscription);
+        $this->verificationUnavailable = true;
+
+        $this->postJson(route('billing.auto-renew.store'), $payload)->assertUnprocessable()->assertJsonValidationErrors('autoRenew');
+
+        $this->assertSame('CARD', $invoice->fresh()->billingMetadata['paymentMethod']);
+        $this->assertSame('ACTIVE', $subscription->fresh()->status);
+        $this->assertSame('PAID', $invoice->fresh()->status);
+        $this->assertFalse($subscription->fresh()->autoRenew);
+        Http::assertNotSent(fn (ClientRequest $request): bool => $this->isCharge($request));
+    }
+
+    /** @return array{authorizationVersion: string, setupToken: string, acceptRenewal: int} */
+    private function enablePayload(Subscription $subscription): array
+    {
+        $setup = app(RecurringBilling::class)->renewalSetup($subscription);
+        $this->assertTrue($setup['available']);
+
+        return ['authorizationVersion' => RecurringBilling::TERMS_VERSION, 'setupToken' => $setup['token'], 'acceptRenewal' => 1];
+    }
+
     /** @return array{User, BillingInvoice} */
     private function shop(string $provider = 'paystack'): array
     {

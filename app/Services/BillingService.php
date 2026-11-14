@@ -36,6 +36,10 @@ class BillingService
             $stale = $existing && ($base
                 ? $base !== [$existing->planId, $existing->currentPeriodStart?->toISOString(), $existing->currentPeriodEnd?->toISOString()]
                 : $existing->currentPeriodEnd?->gt($end));
+            $adminCancellationVersion = $existing?->recurringConsent['adminCancellationVersion'] ?? null;
+            if ($adminCancellationVersion && ($invoice->billingMetadata['adminCancellationVersion'] ?? null) !== $adminCancellationVersion) {
+                $stale = true;
+            }
             $subscription = $stale ? $existing : Subscription::query()->updateOrCreate(
                 ['tenantId' => $tenant->id],
                 ['planId' => $planId, 'status' => 'ACTIVE', 'billingCycle' => $invoice->billingCycle,
@@ -44,6 +48,7 @@ class BillingService
                     'nextBillingDate' => $end, 'cancelAtPeriodEnd' => false, 'cancelledAt' => null, 'cancellationReason' => null]
             );
             $invoice->forceFill(['subscriptionId' => $subscription->id, 'status' => 'PAID',
+                'billingMetadata' => array_merge($invoice->billingMetadata ?? [], ['paymentMethod' => $payment['method'] ?? 'UNKNOWN']),
                 'gateway' => strtoupper((string) ($payment['gateway'] ?? 'CARD')),
                 'gatewayRef' => (string) ($payment['id'] ?? $payment['tx_ref'] ?? $invoice->invoiceNumber), 'paidAt' => $paidAt])->save();
             $this->markShopPaid($tenant);
@@ -52,7 +57,7 @@ class BillingService
             }
             Notification::query()->create(['tenantId' => $tenant->id, 'type' => 'SUBSCRIPTION_RENEWED',
                 'title' => $stale ? 'Subscription payment received for review' : 'Subscription Activated',
-                'message' => $stale ? 'A payment arrived for an older billing period. Your current plan is unchanged; contact support to review it.'
+                'message' => $stale ? 'A payment arrived for a superseded or cancelled subscription checkout. Your current subscription is unchanged; contact support to review it.'
                     : 'Your SalesDock subscription is active. Next billing date: '.$end->copy()->timezone('Africa/Lagos')->format('d M Y').'.', 'createdAt' => now()]);
 
             return $subscription;
@@ -86,8 +91,8 @@ class BillingService
             $metadata = $invoice->billingMetadata ?? [];
             if (! $gateway->confirms($payment, $reference, (float) $invoice->amount)
                 || (($metadata['provider'] ?? $gateway->name()) !== $gateway->name())
-                || (($metadata['cardOnly'] ?? false) && (($payment['method'] ?? null) !== 'CARD'
-                    || abs((float) ($payment['amount'] ?? 0) - (float) $invoice->amount) > 0.009))) {
+                || ($payment['method'] ?? null) !== 'CARD'
+                || abs((float) ($payment['amount'] ?? 0) - (float) $invoice->amount) > 0.009) {
                 return null;
             }
             if ($invoice->status === 'PAID') {

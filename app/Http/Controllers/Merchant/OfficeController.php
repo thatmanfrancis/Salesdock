@@ -25,6 +25,7 @@ use App\Models\Subscription;
 use App\Models\Supplier;
 use App\Models\TaxFiling;
 use App\Models\Tenant;
+use App\Models\TenantRegistration;
 use App\Models\User;
 use App\Models\VatSettings;
 use App\Services\FezDelivery;
@@ -643,9 +644,11 @@ class OfficeController extends MerchantController
         $roleId = (string) $request->query('role', '');
         $branchId = (string) $request->query('branch', '');
         $status = (string) $request->query('status', '');
-        $roles = Role::query()->where('tenantId', $tenantId)->orderBy('name')->pluck('name', 'id');
+        $shopRoles = Role::query()->where('tenantId', $tenantId)->orderBy('name')->get();
+        $roles = $shopRoles->pluck('name', 'id');
         $branches = Branch::query()->where('tenantId', $tenantId)->orderBy('name')->pluck('name', 'id');
-        $assignable = $roles->reject(fn ($name) => $name === 'Owner');
+        $assignable = $shopRoles->filter(fn (Role $role): bool => $role->name !== 'Owner'
+            && $this->canDelegateRole($role->role, $role->permissions ?? []))->pluck('name', 'id');
         [$slots, $limit] = $this->staffSlots($tenantId);
 
         $query = User::query()->with(['role', 'branch'])->where('tenantId', $tenantId);
@@ -776,10 +779,11 @@ class OfficeController extends MerchantController
 
         return view('merchant.staff-member', [
             'member' => $user,
-            'canWrite' => $this->writesStaff(),
+            'canWrite' => $this->writesStaff() && $this->canManageStaffTarget($user),
             'isOwner' => $user->role?->name === 'Owner',
             'isSelf' => $user->id === $actor->id,
-            'roles' => Role::query()->where('tenantId', $tenantId)->where('name', '!=', 'Owner')->orderBy('name')->pluck('name', 'id'),
+            'roles' => Role::query()->where('tenantId', $tenantId)->where('name', '!=', 'Owner')->orderBy('name')->get()
+                ->filter(fn (Role $role): bool => $this->canDelegateRole($role->role, $role->permissions ?? []))->pluck('name', 'id'),
             'branches' => Branch::query()->where('tenantId', $tenantId)->orderBy('name')->pluck('name', 'id'),
             'activity' => ActivityLog::query()
                 ->where('tenantId', $tenantId)
@@ -791,11 +795,14 @@ class OfficeController extends MerchantController
         ]);
     }
 
-    public function updateStaff(Request $request, User $user)
+    public function updateStaff(Request $request, User $user): RedirectResponse
     {
         abort_unless($this->writesStaff(), 403);
         abort_unless($user->tenantId === $this->tenantId(), 404);
         $user->load('role');
+        $isOwner = $user->role?->name === 'Owner';
+        abort_if($isOwner && $user->id !== $this->user()->id, 403);
+        $this->authorizeStaffTarget($user);
 
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
@@ -812,7 +819,6 @@ class OfficeController extends MerchantController
             return back()->withErrors(['branchId' => 'Choose a branch for this shop.'])->withInput();
         }
 
-        $isOwner = $user->role?->name === 'Owner';
         $roleId = $user->roleId;
         if (! $isOwner) {
             if ($user->id === $this->user()->id && ($data['roleId'] ?? '') !== $user->roleId) {
@@ -824,7 +830,7 @@ class OfficeController extends MerchantController
         $roleChanged = $roleId !== $user->roleId;
         $user->fill([
             'name' => $data['name'],
-            'phone' => $data['phone'] ?: null,
+            'phone' => $data['phone'] ?? null,
             'roleId' => $roleId,
             'branchId' => $branch->id,
         ]);
@@ -848,6 +854,7 @@ class OfficeController extends MerchantController
         $user->load('role');
         abort_if($user->id === $this->user()->id, 403);
         abort_if($user->role?->name === 'Owner', 403);
+        $this->authorizeStaffTarget($user);
 
         $user->isActive = ! $user->isActive;
         $user->save();
@@ -861,10 +868,12 @@ class OfficeController extends MerchantController
         return back()->with('status', $user->isActive ? 'Staff reactivated.' : 'Staff deactivated.');
     }
 
-    public function resetStaffPin(Request $request, User $user)
+    public function resetStaffPin(Request $request, User $user): RedirectResponse
     {
         abort_unless($this->writesStaff(), 403);
         abort_unless($user->tenantId === $this->tenantId(), 404);
+        abort_if($user->role?->name === 'Owner', 403);
+        $this->authorizeStaffTarget($user);
 
         $user->pin = hash('sha256', '0000');
         $user->pinIsDefault = true;
@@ -1208,6 +1217,7 @@ class OfficeController extends MerchantController
                 ? (bool) $store->{app(PaymentManager::class)->active()->subaccountColumn()}
                 : false,
             'gatewayLabel' => in_array($section, ['storefront', 'payments'], true) ? app(PaymentManager::class)->active()->label() : null,
+            'canChangePayoutAccount' => $this->canChangePayoutAccount(),
             'deliveryAccount' => $section === 'delivery' ? DeliveryAccount::query()->firstOrNew(['tenantId' => $tenant->id]) : null,
             'deliveryStates' => $section === 'delivery' ? FezDelivery::states() : [],
             'deliveryConfig' => $section === 'delivery' ? PlatformSetting::delivery() : null,
@@ -1276,7 +1286,12 @@ class OfficeController extends MerchantController
     private function saveRestock(Request $request)
     {
         $on = $request->boolean('restockDrafts');
-        Tenant::query()->whereKey($this->tenantId())->update(['restockDrafts' => $on]);
+        $settings = ['restockDrafts' => $on];
+        if ($request->boolean('restockChannelsPresent')) {
+            $settings['restockAlertEmail'] = $request->boolean('restockAlertEmail');
+            $settings['restockAlertWhatsApp'] = $request->boolean('restockAlertWhatsApp');
+        }
+        Tenant::query()->whereKey($this->tenantId())->update($settings);
 
         return redirect()->route('settings', ['section' => 'restock'])->with('status', $on
             ? 'Restock drafts are on. Suppliers you have switched on will get draft orders when stock runs low.'
@@ -1293,9 +1308,10 @@ class OfficeController extends MerchantController
     /** @param array{bankCode: string, bankAccount: string} $details */
     private function confirmPayoutAccountChange(Request $request, StorefrontConfig $store, array $details): void
     {
-        if (! $store->bankAccount || ! $this->payoutAccountChanged($store, $details)) {
+        if (! $this->payoutAccountChanged($store, $details)) {
             return;
         }
+        abort_unless($this->canChangePayoutAccount(), 403);
 
         $limiterKey = 'payout-account-password:'.$this->user()->id;
         if (RateLimiter::tooManyAttempts($limiterKey, 5)) {
@@ -1338,7 +1354,7 @@ class OfficeController extends MerchantController
         if (! empty($data['bankAccount'])) {
             $store = StorefrontConfig::query()->firstOrNew(['tenantId' => $tenant->id]);
             $this->confirmPayoutAccountChange($request, $store, $data);
-            if ($this->payoutAccountChanged($store, $data) || ! $store->{app(PaymentManager::class)->active()->subaccountColumn()}) {
+            if ($this->canChangePayoutAccount() && ($this->payoutAccountChanged($store, $data) || ! $store->{app(PaymentManager::class)->active()->subaccountColumn()})) {
                 try {
                     app(StorePayouts::class)->sync($tenant, $store, $data);
                 } catch (\RuntimeException $exception) {
@@ -1408,17 +1424,20 @@ class OfficeController extends MerchantController
             return back()->withErrors(['name' => 'A role named '.$name.' already exists.'])->withInput();
         }
 
+        $permissions = match ($data['role']) {
+            'CASHIER' => Permissions::defaults('Cashier'),
+            'SUPERVISOR' => Permissions::defaults('Supervisor'),
+            'MANAGER' => Permissions::defaults('Manager'),
+            default => Permissions::defaults(''),
+        };
+        abort_unless($this->canDelegateRole($data['role'], $permissions), 403);
+
         $role = Role::query()->create([
             'tenantId' => $tenantId,
             'name' => $name,
             'role' => $data['role'],
             'isDefault' => false,
-            'permissions' => match ($data['role']) {
-                'CASHIER' => Permissions::defaults('Cashier'),
-                'SUPERVISOR' => Permissions::defaults('Supervisor'),
-                'MANAGER' => Permissions::defaults('Manager'),
-                default => Permissions::defaults(''),
-            },
+            'permissions' => $permissions,
         ]);
 
         return redirect()->route('roles', ['role' => $role->id])->with('status', 'Role added.');
@@ -1431,13 +1450,17 @@ class OfficeController extends MerchantController
         if ($role->name === 'Owner') {
             return back()->withErrors(['role' => 'The owner role stays on every ability.']);
         }
+        abort_if($role->id === $this->user()->roleId, 403);
+        abort_unless($this->canDelegateRole($role->role, $role->permissions ?? []), 403);
 
         $flags = array_fill_keys(Permissions::KEYS, false);
-        foreach ($request->input('permissions', []) as $key) {
+        $data = $request->validate(['permissions' => ['sometimes', 'array'], 'permissions.*' => ['string']]);
+        foreach ($data['permissions'] ?? [] as $key) {
             if (array_key_exists($key, $flags)) {
                 $flags[$key] = true;
             }
         }
+        abort_unless($this->canDelegateRole($role->role, $flags), 403);
         $role->permissions = $flags;
         $role->save();
 
@@ -1454,6 +1477,7 @@ class OfficeController extends MerchantController
         if ($role->users()->exists()) {
             return back()->withErrors(['role' => 'This role still has people on it.']);
         }
+        abort_unless($this->canDelegateRole($role->role, $role->permissions ?? []), 403);
         $role->delete();
 
         return redirect()->route('roles')->with('status', 'Role deleted.');
@@ -1649,6 +1673,8 @@ class OfficeController extends MerchantController
 
         return view('merchant.profile', [
             'member' => $user,
+            'needsRecoveryEmailConfirmation' => TenantRegistration::query()->where('email', $user->email)
+                ->whereNotNull('phoneVerifiedAt')->where('emailVerified', false)->exists(),
             'sections' => $sections,
             'section' => $section,
             'initials' => $this->initials($user->name),
@@ -1810,6 +1836,11 @@ class OfficeController extends MerchantController
 
         return view('merchant.billing', [
             'subscription' => $subscription,
+            'renewalSetup' => $subscription && app(RecurringBilling::class)->canAuthorize($this->user(), $tenantId) && ! $subscription->autoRenew
+                ? app(RecurringBilling::class)->renewalSetup($subscription) : null,
+            'pendingRenewalConsent' => BillingInvoice::query()->where('tenantId', $tenantId)->where('status', 'PENDING')
+                ->where('billingMetadata->autoRenewRequested', true)
+                ->when($subscription?->recurringConsent['revokedAt'] ?? null, fn ($query, $revokedAt) => $query->where('billingMetadata->consent->acceptedAt', '>', $revokedAt))->exists(),
             'plans' => Plan::query()->purchasable()->orderBy('monthlyPrice')->get(),
             'invoices' => $invoiceQuery->forPage($page, $perPage)->get(),
             'cycles' => $cycles,
@@ -2246,6 +2277,7 @@ class OfficeController extends MerchantController
     private function saveStorefront(Request $request)
     {
         $banks = app(PaymentManager::class)->active()->banks();
+        $canChangePayoutAccount = $this->canChangePayoutAccount();
         $data = $request->validate([
             'storeName' => ['nullable', 'string', 'max:255'],
             'tagline' => ['nullable', 'string', 'max:255'],
@@ -2253,23 +2285,25 @@ class OfficeController extends MerchantController
             'customDomain' => ['nullable', 'string', 'max:255'],
             'metaTitle' => ['nullable', 'string', 'max:255'],
             'metaDescription' => ['nullable', 'string', 'max:500'],
-            'bankCode' => ['required', 'string', 'max:20', Rule::in(array_keys($banks))],
-            'bankAccount' => ['required', 'string', 'max:20'],
+            'bankCode' => [Rule::requiredIf($canChangePayoutAccount), 'nullable', 'required_with:bankAccount', 'string', 'max:20', Rule::in(array_keys($banks))],
+            'bankAccount' => [Rule::requiredIf($canChangePayoutAccount), 'nullable', 'required_with:bankCode', 'string', 'max:20'],
             'accountName' => ['nullable', 'string', 'max:255'],
             'banner' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
         ]);
         $tenant = Tenant::query()->findOrFail($this->tenantId());
         $store = StorefrontConfig::query()->firstOrNew(['tenantId' => $tenant->id]);
-        $this->confirmPayoutAccountChange($request, $store, $data);
-        $syncPayoutAccount = $this->payoutAccountChanged($store, $data)
-            || ! $store->{app(PaymentManager::class)->active()->subaccountColumn()};
+        if (! empty($data['bankAccount'])) {
+            $this->confirmPayoutAccountChange($request, $store, $data);
+        }
+        $syncPayoutAccount = $canChangePayoutAccount && ($this->payoutAccountChanged($store, $data)
+            || ! $store->{app(PaymentManager::class)->active()->subaccountColumn()});
         $store->fill([
-            'storeName' => $data['storeName'] ?: $tenant->name,
-            'tagline' => $data['tagline'] ?: null,
-            'accentColor' => $data['accentColor'] ?: '#16a34a',
-            'customDomain' => $data['customDomain'] ?: null,
-            'metaTitle' => $data['metaTitle'] ?: null,
-            'metaDescription' => $data['metaDescription'] ?: null,
+            'storeName' => ($data['storeName'] ?? null) ?: $tenant->name,
+            'tagline' => $data['tagline'] ?? null,
+            'accentColor' => ($data['accentColor'] ?? null) ?: '#16a34a',
+            'customDomain' => $data['customDomain'] ?? null,
+            'metaTitle' => $data['metaTitle'] ?? null,
+            'metaDescription' => $data['metaDescription'] ?? null,
             'isPublic' => $request->boolean('isPublic'),
             'allowGuestOrder' => $request->boolean('allowGuestOrder'),
             'updatedAt' => now(),
@@ -2407,8 +2441,54 @@ class OfficeController extends MerchantController
                 'roleId' => 'Choose a role for this shop.',
             ]);
         }
+        abort_unless($this->canDelegateRole($role->role, $role->permissions ?? []), 403);
 
         return $role;
+    }
+
+    private function authorizeStaffTarget(User $target): void
+    {
+        abort_unless($this->canManageStaffTarget($target), 403);
+    }
+
+    private function canManageStaffTarget(User $target): bool
+    {
+        $actor = $this->user();
+        $target->loadMissing('role');
+        if ($target->id === $actor->id) {
+            return true;
+        }
+
+        if ($target->role?->name === 'Owner' || ($target->isSuperAdmin && ! $actor->isSuperAdmin)) {
+            return false;
+        }
+
+        return ! $target->role || $this->canDelegateRole($target->role->role, $target->role->permissions ?? []);
+    }
+
+    private function canDelegateRole(string $role, array $permissions): bool
+    {
+        $actor = $this->user()->loadMissing('role');
+        if ($actor->isSuperAdmin) {
+            return true;
+        }
+        if ($role === 'SUPER_ADMIN') {
+            return false;
+        }
+        if ($actor->role?->name === 'Owner') {
+            return true;
+        }
+
+        return Permissions::level($role) <= Permissions::level($actor->role?->role ?? '')
+            && array_diff_key(
+                array_filter(Permissions::normalize($permissions)),
+                array_filter(Permissions::normalize($actor->role?->permissions ?? [])),
+            ) === [];
+    }
+
+    private function canChangePayoutAccount(): bool
+    {
+        return $this->user()->loadMissing('role')->role?->name === 'Owner';
     }
 
     private function initials(string $name): string

@@ -2041,7 +2041,8 @@ class DeskController extends MerchantController
     {
         $tenantId = $this->tenantId();
         $used = Product::query()->where('tenantId', $tenantId)->count();
-        $planId = Subscription::query()->where('tenantId', $tenantId)->value('planId');
+        $subscription = Subscription::query()->where('tenantId', $tenantId)->first();
+        $planId = $subscription?->hasPlanAccess() ? $subscription->planId : null;
         $limit = (int) ($planId ? (Plan::query()->whereKey($planId)->value('maxProducts') ?? 500) : 500);
 
         return [$used, max(1, $limit)];

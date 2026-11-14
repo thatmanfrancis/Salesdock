@@ -6,6 +6,7 @@
     'required' => false,
     'minlength' => null,
     'maxlength' => null,
+    'autocomplete' => 'off',
 ])
 
 <div class="relative w-full rounded-md border border-gray-400 p-3">
@@ -21,7 +22,7 @@
         @if ($required) required @endif
         @if ($minlength) minlength="{{ $minlength }}" @endif
         @if ($maxlength) maxlength="{{ $maxlength }}" @endif
-        autocomplete="off"
+        autocomplete="{{ $autocomplete }}"
         autocorrect="off"
         autocapitalize="none"
         spellcheck="false"

@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Models\PasswordResetToken;
+use App\Models\TenantRegistration;
 use App\Models\User;
 use App\Support\AuthMail;
 use App\Support\Turnstile;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -27,7 +29,7 @@ class PasswordController extends Controller
         $user = User::query()->whereRaw('lower(email) = ?', [$email])->first();
         $message = 'If that email exists, a reset link has been sent.';
 
-        if ($user && $user->isActive) {
+        if ($user && $user->isActive && ! $this->requiresEmailConfirmation($user)) {
             PasswordResetToken::query()
                 ->where('userId', $user->id)
                 ->whereNull('usedAt')
@@ -77,11 +79,54 @@ class PasswordController extends Controller
             return back()->withErrors(['token' => 'Invalid or expired reset link']);
         }
 
-        User::query()->whereKey($reset->userId)->update([
+        $user = User::query()->find($reset->userId);
+        if (! $user || $this->requiresEmailConfirmation($user)) {
+            return back()->withErrors(['token' => 'Invalid or expired reset link']);
+        }
+
+        $user->update([
             'passwordHash' => Hash::make($data['password'], ['rounds' => 12]),
         ]);
         $reset->forceFill(['usedAt' => now()])->save();
 
         return redirect()->route('login')->with('status', 'Password updated successfully');
+    }
+
+    private function requiresEmailConfirmation(User $user): bool
+    {
+        return TenantRegistration::query()->where('email', $user->email)
+            ->whereNotNull('phoneVerifiedAt')->where('emailVerified', false)->exists();
+    }
+
+    public function sendRecoveryConfirmation(Request $request): RedirectResponse
+    {
+        $registration = $this->pendingRecoveryConfirmation($request->user());
+        $token = Str::random(64);
+        $registration->update(['verifyToken' => hash('sha256', $token), 'verifyTokenExp' => now()->addMinutes(30)]);
+        $sent = AuthMail::send($registration->email, $registration->ownerName, 'Confirm your SalesDock recovery email', [
+            'paragraphs' => ['Open the link while signed in to confirm this inbox for password recovery. The link expires in 30 minutes.'],
+            'url' => route('recovery-email.confirm', ['token' => $token]),
+            'label' => 'Confirm recovery email',
+        ]);
+
+        return back()->with('status', $sent ? 'Check your inbox and spam folder for the confirmation link.' : 'The email could not be sent. Try again shortly.');
+    }
+
+    public function confirmRecoveryEmail(Request $request): RedirectResponse
+    {
+        $registration = $this->pendingRecoveryConfirmation($request->user());
+        $token = $request->query('token');
+        abort_unless(is_string($token) && $registration->verifyTokenExp?->isFuture()
+            && hash_equals((string) $registration->verifyToken, hash('sha256', $token)), 403);
+
+        $registration->update(['emailVerified' => true, 'emailVerifiedAt' => now(), 'verifyToken' => null, 'verifyTokenExp' => null]);
+
+        return redirect()->route('profile')->with('status', 'Your email is confirmed for password recovery.');
+    }
+
+    private function pendingRecoveryConfirmation(User $user): TenantRegistration
+    {
+        return TenantRegistration::query()->where('email', $user->email)
+            ->whereNotNull('phoneVerifiedAt')->where('emailVerified', false)->firstOrFail();
     }
 }

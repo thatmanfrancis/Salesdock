@@ -12,7 +12,7 @@ Schedule::command('tax-filings:generate')->monthlyOn(1, '0:00')->timezone('Afric
 Schedule::command('subscriptions:expire')->dailyAt('00:05')->timezone('Africa/Lagos');
 Schedule::command('subscriptions:renew')->hourly()->withoutOverlapping(15)->timezone('Africa/Lagos');
 Schedule::command('subscriptions:downgrade')->dailyAt('00:10')->timezone('Africa/Lagos');
-Schedule::command('subscriptions:end-trials')->dailyAt('08:00')->timezone('Africa/Lagos');
+Schedule::command('subscriptions:end-trials')->dailyAt('08:00')->withoutOverlapping()->timezone('Africa/Lagos');
 Schedule::command('tenants:purge')->dailyAt('02:00')->timezone('Africa/Lagos');
 Schedule::command('registrations:prune')->dailyAt('02:30')->timezone('Africa/Lagos');
 Schedule::command('deliveries:sync-fez')->everyFifteenMinutes()->timezone('Africa/Lagos');

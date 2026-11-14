@@ -32,8 +32,8 @@
                 <input name="ownerName" value="{{ old('ownerName', $profile['ownerName']) }}" placeholder="John Doe" maxlength="255" required autocomplete="name">
             </label>
             <label class="ui-field">
-                <span>Phone <span class="req">*</span></span>
-                <input name="phone" value="{{ old('phone', $profile['phone']) }}" placeholder="+234..." maxlength="50" inputmode="tel" required autocomplete="tel">
+                <span>Business WhatsApp number <span class="req">*</span></span>
+                <input type="tel" name="phone" value="{{ old('phone', $profile['phone']) }}" placeholder="0803 000 0000" maxlength="50" required autocomplete="tel">
             </label>
             <div class="wide">
                 <x-ui.select name="businessType" label="Business type" :value="old('businessType', $profile['businessType'] ?? '')" :options="$types" required />

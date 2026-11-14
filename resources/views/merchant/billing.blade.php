@@ -50,7 +50,7 @@
 @section('content')
     <div class="page">
         <section class="bill-now">
-            @if ($subscription?->status === 'TRIALING')
+            @if ($subscription?->onTrial())
                 @php
                     $trialDays = $subscription->trialEndsAt ? max(0, (int) ceil(now()->diffInSeconds($subscription->trialEndsAt, false) / 86400)) : 0;
                 @endphp
@@ -62,6 +62,17 @@
                         Ends {{ $subscription->trialEndsAt?->timezone('Africa/Lagos')->format('d M Y') ?: '—' }}.
                     </p>
                     <p class="bill-trial">{{ $trialDays }} {{ $trialDays === 1 ? 'day' : 'days' }} left. Pick a plan before the trial ends to keep selling without interruption.</p>
+                </div>
+            @elseif ($subscription && ! $subscription->hasPlanAccess())
+                <div>
+                    <span>Current access</span>
+                    <strong>{{ $subscription->usesBasicAccess() ? 'Basic — free access' : 'No active paid plan' }}</strong>
+                    @if ($subscription->usesBasicAccess())
+                        <p>Keep selling with POS, basic inventory, customers, sales history and refunds. Your paid subscription has ended; automatic renewal is off.</p>
+                        <p>Upgrade for advanced analytics, staff management, promotions, purchase orders and the online storefront. Your existing data and invoices are retained.</p>
+                    @else
+                        <p><span class="badge cancelled">{{ $statuses[$subscription->status] ?? $subscription->status }}</span> This account is suspended. Contact support for help.</p>
+                    @endif
                 </div>
             @elseif ($subscription?->plan)
                 <div>
@@ -91,19 +102,70 @@
                         <p>Upcoming schedule: {{ \App\Services\SubscriptionPricing::description($subscription->billingPricing, false) }}</p>
                     @endif
                 @else
-                    <p>Automatic renewal is off. Renew by making a one-time card payment, or opt in when you next pay while signed in as the shop owner.</p>
+                    <p>Automatic renewal is off. No future automatic charge is authorised.</p>
+                    @if ($subscription->status === 'ACTIVE' && $subscription->currentPeriodEnd?->isFuture())
+                        <p>Your paid subscription stays active until {{ $subscription->currentPeriodEnd->timezone('Africa/Lagos')->format('d M Y') }}.</p>
+                    @endif
                 @endif
                 @if (auth()->user()?->role?->name === 'Owner')
-                        <form method="post" action="{{ route('billing.auto-renew.destroy') }}">
+                    @if ($subscription->autoRenew)
+                        <form method="post" action="{{ route('billing.auto-renew.destroy') }}" data-busy>
                             @csrf
                             @method('DELETE')
-                            <button type="submit">Turn off automatic renewal</button>
+                            <button type="submit" class="bill-renew-switch" role="switch" aria-checked="true" aria-label="Automatic renewal. Turn off">
+                                <span class="bill-renew-track" aria-hidden="true"></span> On — turn off
+                            </button>
                         </form>
-                        <p>This also withdraws a pending automatic-renewal request. Cancellation stops future submissions and keeps your paid access until the period ends. A charge already submitted may still complete.</p>
+                        <p>Turning this off keeps your paid access until the period ends. A charge already submitted may still complete.</p>
+                    @else
+                        <button type="button" class="bill-renew-switch" role="switch" aria-checked="false" aria-label="Automatic renewal. Turn on" aria-haspopup="dialog" aria-controls="renewal-enable-dialog" id="renewal-enable-button" @disabled(! ($renewalSetup['available'] ?? false))>
+                            <span class="bill-renew-track" aria-hidden="true"></span> Off — turn on
+                        </button>
+                        @if ($renewalSetup['available'] ?? false)
+                            <p>Check whether your previous subscription payment has a reusable card. Review and approve the amount and date first. Nothing is charged when you enable it. If you paid by bank transfer, keep your current paid access and opt in when you next renew by card.</p>
+                            <dialog id="renewal-enable-dialog" class="bill-renew-dialog" aria-labelledby="renewal-enable-title">
+                                <form method="post" action="{{ route('billing.auto-renew.store') }}" data-busy>
+                                    @csrf
+                                    <h2 id="renewal-enable-title">Enable automatic renewal</h2>
+                                    <p>{{ $subscription->plan?->name }} · {{ $cycles[$subscription->billingCycle] ?? $subscription->billingCycle }}</p>
+                                    <p><strong>Next charge: ₦{{ number_format($renewalSetup['amount'], 2) }} on {{ $subscription->currentPeriodEnd->timezone('Africa/Lagos')->format('d M Y') }}.</strong></p>
+                                    <p>{{ \App\Services\SubscriptionPricing::description($renewalSetup['pricing'], false) }}</p>
+                                    <p>We will verify your previous subscription payment with the payment provider. No payment is taken today. Bank transfers cannot supply a reusable card; if you previously paid by transfer, renewal stays off until you renew by card and opt in. Your existing paid period is preserved.</p>
+                                    <input type="hidden" name="authorizationVersion" value="{{ \App\Services\RecurringBilling::TERMS_VERSION }}">
+                                    <input type="hidden" name="setupToken" value="{{ $renewalSetup['token'] }}">
+                                    <label class="bill-renew-consent">
+                                        <input type="checkbox" name="acceptRenewal" value="1" required>
+                                        <span>{{ \App\Services\RecurringBilling::consentText($renewalSetup['amount'], $subscription->billingCycle, $renewalSetup['pricing'], false) }}</span>
+                                    </label>
+                                    <p><a href="{{ route('recurring.terms') }}" target="_blank" rel="noopener">Read the recurring card authorisation</a></p>
+                                    <div class="ui-modal-actions">
+                                        <button type="button" id="renewal-enable-cancel">Cancel</button>
+                                        <button type="submit" data-loading="Verifying card…">Confirm and enable</button>
+                                    </div>
+                                </form>
+                            </dialog>
+                            <script>
+                                const renewalDialog = document.getElementById('renewal-enable-dialog');
+                                document.getElementById('renewal-enable-button').addEventListener('click', () => renewalDialog.showModal());
+                                document.getElementById('renewal-enable-cancel').addEventListener('click', () => renewalDialog.close());
+                            </script>
+                        @else
+                            <p>{{ $renewalSetup['reason'] ?? 'Automatic renewal is unavailable. You can renew manually by card.' }}</p>
+                        @endif
+                        @if ($pendingRenewalConsent ?? false)
+                            <p>A checkout has a pending renewal request. You can withdraw that request before it completes.</p>
+                            <form method="post" action="{{ route('billing.auto-renew.destroy') }}">
+                                @csrf
+                                @method('DELETE')
+                                <button type="submit">Withdraw pending renewal request</button>
+                            </form>
+                        @endif
+                    @endif
                     @if (! empty($subscription->recurringConsent['invoiceId']))
                         <p><a href="{{ route('billing.authorization', $subscription->recurringConsent['invoiceId']) }}">View or print your card authorisation record</a></p>
                     @endif
                 @endif
+                <p>New software subscription payments are card-only. Previously accepted transfer payments remain valid for their paid period. Automatic renewal is a separate choice.</p>
                 <p><a href="{{ route('recurring.terms') }}">Recurring card payment terms</a></p>
             </section>
         @endif
@@ -122,7 +184,7 @@
         <div class="plan-grid">
             @foreach ($plans as $plan)
                 @php
-                    $same = $subscription && $subscription->status !== 'TRIALING' && $subscription->planId === $plan->id;
+                    $same = $subscription && in_array($subscription->status, ['ACTIVE', 'PAST_DUE'], true) && $subscription->planId === $plan->id;
                     $current = $same && $subscription->billingCycle === $cycle;
                     $amount = (float) match ($cycle) {
                         'QUARTERLY' => $plan->quarterlyPrice,
@@ -159,6 +221,8 @@
                             <input type="hidden" name="cycle" value="{{ $cycle }}">
                             @if ($amount > 0 && ! $ready)
                                 <button type="button" disabled>Payment key missing</button>
+                            @elseif ($subscription && ! $subscription->hasPlanAccess())
+                                <button type="submit">Subscribe to this plan</button>
                             @elseif ($same)
                                 <button type="submit">Switch to {{ strtolower($cycles[$cycle]) }}</button>
                             @elseif ($subscription && $subscription->status !== 'TRIALING')

@@ -6,6 +6,11 @@ use Illuminate\Database\Eloquent\Model;
 
 class TenantRegistration extends Model
 {
+    public function accountVerified(): bool
+    {
+        return $this->emailVerified || $this->phoneVerifiedAt !== null;
+    }
+
     protected $table = 'tenant_registrations';
 
     public static $snakeAttributes = false;
@@ -34,6 +39,8 @@ class TenantRegistration extends Model
         return [
             'emailVerified' => 'boolean',
             'emailVerifiedAt' => 'datetime',
+            'phoneVerifiedAt' => 'datetime',
+            'verificationSentAt' => 'datetime',
             'verifyTokenExp' => 'datetime',
             'reviewedAt' => 'datetime',
             'planTokenExp' => 'datetime',

@@ -53,6 +53,7 @@
                         <th>Status</th>
                         <th>Renews</th>
                         <th>Started</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -68,15 +69,20 @@
                                     —
                                 @endif
                             </td>
-                            <td>{{ $subscription->plan?->name ?: '—' }}</td>
+                            <td>{{ $subscription->hasPlanAccess() ? ($subscription->plan?->name ?: '—') : ($subscription->usesBasicAccess() ? 'Basic — free access' : 'No active paid plan') }}</td>
                             <td>{{ $cycles[$subscription->billingCycle] ?? $subscription->billingCycle }}</td>
                             <td><span class="badge {{ $tone[$subscription->status] ?? 'draft' }}">{{ $labels[$subscription->status] ?? $subscription->status }}</span></td>
-                            <td>{{ $when($subscription->currentPeriodEnd) }}</td>
+                            <td>{{ $subscription->status === 'CANCELLED' ? '—' : $when($subscription->currentPeriodEnd) }}</td>
                             <td>{{ $when($subscription->createdAt) }}</td>
+                            <td>
+                                @if ($subscription->tenant && $subscription->status !== 'CANCELLED')
+                                    @include('platform.cancel-subscription', ['tenant' => $subscription->tenant])
+                                @endif
+                            </td>
                         </tr>
                     @empty
                         <tr>
-                            <td class="empty" colspan="6">No subscriptions.</td>
+                            <td class="empty" colspan="7">No subscriptions.</td>
                         </tr>
                     @endforelse
                 </tbody>
