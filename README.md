@@ -1,117 +1,153 @@
 <div align="center">
 
-<a href="https://salesdock.ng"><img src="public/SalesDock.svg" alt="SalesDock — by Town Growers" width="300"></a>
+<a href="https://salesdock.ng"><img src="public/SalesDock.svg" alt="SalesDock — by Town Growers" width="280" /></a>
 
 # Every sale. Every item. One workspace.
 
-**Point of sale, inventory, and online storefronts built for Nigerian retailers.**
+**Point of sale, inventory and online storefronts for Nigerian retailers.**
 
-Sell at the counter. Take orders online. Track stock across branches. Keep your team accountable.
-
-[Visit SalesDock](https://salesdock.ng) · [Explore the product](#a-closer-look) · [Run locally](#run-locally)
-
-![Laravel 13](https://img.shields.io/badge/Laravel-13-FF2D20?style=flat-square&logo=laravel&logoColor=white)
-![PHP 8.5](https://img.shields.io/badge/PHP-8.5-777BB4?style=flat-square&logo=php&logoColor=white)
-![Tailwind CSS 4](https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)
-![Built for Nigeria](https://img.shields.io/badge/Built_for-Nigeria-16A34A?style=flat-square)
+[Visit SalesDock](https://salesdock.ng) · [Engineering decisions](#engineering-decisions-and-code) · [Run locally](#run-locally)
 
 </div>
 
----
+![SalesDock homepage](public/readme/home.png)
 
-SalesDock connects the work behind a retail business: the register, the stockroom, the online shop, and the back office. Merchants manage daily operations in a shared workspace, while platform administrators manage tenants, subscriptions, billing, and support.
+## Project context and my role
 
-The interface pairs SalesDock's orange identity with green actions, clear typography, and focused workspaces. The same product language carries from the public website through sign-in and into merchant operations.
+SalesDock is a **Town Growers** product bringing the register, stockroom, online shop and back office into one application.
 
-## Built around the way retailers work
+**My role: Full Stack Engineer (contract).** My work focused on connecting point-of-sale checkout, online storefronts and shared inventory, with traceable sales operations and staff access controls. The case study below explains that contribution; the wider product overview describes the current repository rather than claiming sole authorship of every module.
 
-| Workspace | What it brings together |
-| --- | --- |
-| <img src="public/readme/pos.svg" width="20" height="20" alt=""> **Point of sale** | Product selection, held sales, cash/card/transfer workflows, receipts, and payment status checks. |
-| <img src="public/readme/inventory.svg" width="20" height="20" alt=""> **Inventory & branches** | Product variants, branch stock, adjustments, transfers, CSV imports, and restock monitoring. |
-| <img src="public/readme/storefront.svg" width="20" height="20" alt=""> **Online storefront** | A merchant store link, product pages, cart, checkout, order tracking, and delivery integration. |
-| <img src="public/readme/customers.svg" width="20" height="20" alt=""> **Customers & suppliers** | Customer records, supplier management, purchase orders, and supplier messaging. |
-| <img src="public/readme/operations.svg" width="20" height="20" alt=""> **Business operations** | Expenses, financial reports, ledger, payroll, payslips, and tax filing workflows. |
-| <img src="public/readme/accountability.svg" width="20" height="20" alt=""> **Team accountability** | Staff roles, granular permissions, PIN access, activity history, and audit logs. |
-| <img src="public/readme/platform.svg" width="20" height="20" alt=""> **Platform administration** | Tenant review, plan catalogue, subscriptions, revenue, webhooks, settings, and support tickets. |
+## The problem and the work
 
-Feature access depends on the merchant's plan and staff permissions. Payment, messaging, and delivery workflows require their corresponding provider configuration.
+### Situation — one business, several versions of the sale
 
-### Designed for local realities
+A retailer can sell the same product at the counter and through an online shop. Those channels need to agree on stock, payment state and the order itself. Across branches and staff accounts, the problem becomes more than displaying a product catalogue: the business needs to know what was sold, where it came from, who processed it and whether payment was confirmed.
 
-- **Naira at the centre.** A product experience built around Nigerian retail businesses and local payment providers.
-- **Sales through more than one channel.** Counter sales and online orders share the same application and inventory services.
-- **An offline-capable register.** A service worker caches the POS shell and queues offline sales in IndexedDB for replay when connectivity returns. The register must first be opened online; payment verification and synchronisation require a connection.
-- **Room to grow.** Tenant and branch records, plan-based access, and staff permissions support businesses beyond a single till.
+Connectivity adds another constraint. A register should preserve work during a connection failure, but a locally queued sale cannot be treated as a verified online payment or a confirmed update to the server's inventory.
 
-## A closer look
+### Task — connect checkout to the operations behind it
 
-### Homepage
+The goal was to connect in-store and online selling through shared application services, while preserving the context needed for inventory, payments and accountability.
 
-<a href="public/readme/home.png"><img src="public/readme/home.png" alt="SalesDock desktop homepage with full navigation, product headline, and four-column product preview" width="100%"></a>
+The workflows needed to handle branch stock, pending payments, repeated checkout requests, held sales and different staff permissions. A sale should be represented consistently across the order, stock movements, transaction records and reporting inputs.
 
-### Sign-in
+### Action — connect the customer flow to shared business logic
 
-<a href="public/readme/login.png"><img src="public/readme/login.png" alt="SalesDock desktop sign-in screen with email and PIN login tabs" width="100%"></a>
+My contribution centered on the end-to-end retail workflow:
 
-Actual public website captures, taken in October 2026 in the desktop layout. Select either image to open the original PNG. These show the homepage and sign-in experience.
+- Connected checkout and order handling with the product catalogue and inventory operations.
+- Connected online storefront orders with the same retail data and sale-recording logic used by the application.
+- Worked on keeping sales operations traceable through order, staff, branch and payment information.
+- Worked across customer-facing screens and operational workflows rather than treating the storefront as a separate stock system.
 
-**Use the pictures elsewhere:** download [the homepage capture](public/readme/home.png) or [the sign-in capture](public/readme/login.png). The files live in `public/readme/`, so committing them alongside this README keeps the GitHub image links intact. To copy a hosted image URL after pushing, open the image on GitHub and use its raw file link.
+The current implementation provides concrete examples of those concerns: `SaleRecorder` coordinates sales and completion, `BranchInventory` handles stock operations, `StoreCart` keeps merchant-specific carts, and `PosPayments` coordinates provider checkout and reconciliation. The sections below link directly to those components and relevant tests.
 
-## Under the hood
+### Result — a connected retail workflow
 
-SalesDock is a **Laravel monolith with server-rendered Blade views**, Eloquent models, and service classes for business workflows. Merchant tools, public storefronts, authentication, and platform administration live in one application.
+The application brings point of sale, online ordering and branch inventory into a shared system. It represents pending and completed sales separately, associates transactions with orders, and records the branch and staff context needed to investigate activity.
 
-| Layer | Implementation |
-| --- | --- |
-| Application | Laravel 13; this build runs on PHP 8.5 |
-| Interface | Blade, Tailwind CSS 4, custom CSS, and browser JavaScript |
-| Asset pipeline | Vite 8 and the Laravel Vite plugin |
-| Persistence | Eloquent; PostgreSQL in the example environment |
-| Offline POS | Service worker, Cache API, and IndexedDB |
-| Payments | A shared `PaymentGateway` contract with Flutterwave and Paystack implementations |
-| Background work | Laravel jobs, database queues, and scheduled commands |
-| Quality tools | PHPUnit and Laravel Pint |
+The repository also contains regression tests for duplicate checkout, payment confirmation, branch reservations, cross-tenant access and staff privilege boundaries. These are inspectable engineering artifacts, rather than an unsupported claim that operational errors have been eliminated.
 
-### How the code is organised
+No revenue uplift, merchant count, reduction in stock discrepancies or checkout-speed improvement is claimed here without supporting measurement.
 
-```text
-app/
-  Contracts/          Shared interfaces, including payment gateways
-  Http/Controllers/  Authentication, merchant, storefront, and platform endpoints
-  Http/Middleware/   Workspace access, roles, and session checks
-  Jobs/              Background work such as delivery booking
-  Models/            Tenants, branches, products, orders, billing, and more
-  Services/          Sales, stock, payments, delivery, billing, and tax workflows
-  Support/           Permissions, plan features, CSV helpers, and shared utilities
-database/            Migrations, factories, and seeders
-public/              Brand assets, service worker, and README screenshots
-resources/views/     Blade layouts and role-specific screens
-routes/              Web endpoints and scheduled tasks
-tests/               Feature and unit coverage
-```
+## Engineering decisions and code
 
-Business workflows are expressed in services such as `SaleRecorder`, `BranchInventory`, `StoreCart`, and `BillingService`. `PaymentManager` selects the configured payment provider through a common contract. Workspace middleware applies role, permission, subscription, and plan checks before users reach protected screens.
+### Record related sale changes in a transaction
 
-The data model uses explicit tenant and branch associations, ULID identifiers on models such as `Tenant`, and existing camelCase database fields such as `tenantId` and `createdAt`.
+`SaleRecorder` coordinates order creation, order items, stock changes and transaction records inside a database transaction. It uses row locks around relevant records and checks a tenant-scoped `checkoutRequestId` before recording another sale. For an existing matching request, the service can return the previously created order.
+
+Pending-order completion is a separate operation: the service returns an already-completed order, rejects invalid completion states and checks whether provider verification is required. This makes retries and payment state part of the sale workflow rather than only a frontend concern.
+
+[SaleRecorder](app/Services/SaleRecorder.php) · [POS payment regression tests](tests/Feature/PosPaymentTest.php)
+
+### Model branch availability and reservations explicitly
+
+`BranchInventory` handles stock quantities, additions, deductions and transfers. Its availability calculation accounts for reservations associated with pending orders at a branch. Storefront carts are scoped by tenant, and checkout line data is loaded from the merchant's products.
+
+This distinguishes physical stock from stock currently available to sell and keeps merchant-specific shopping sessions separate.
+
+[BranchInventory](app/Services/BranchInventory.php) · [StoreCart](app/Services/StoreCart.php) · [Cart tests](tests/Unit/StoreCartTest.php)
+
+### Support payment providers through one contract
+
+`PaymentManager` selects a Flutterwave or Paystack implementation through the shared `PaymentGateway` interface. `PosPayments` handles checkout initialization, stored attempt metadata and reference-based reconciliation.
+
+Reconciliation queries the provider and passes the result through the settlement workflow. This gives the application a recovery path when a payment notification is missed, while preserving the distinction between initiating checkout and confirming payment.
+
+[Payment contract](app/Contracts/PaymentGateway.php) · [Provider selection](app/Services/PaymentManager.php) · [POS payments](app/Services/PosPayments.php)
+
+### Preserve staff and merchant boundaries
+
+The workspace layer derives navigation and access behavior from the user's role, permissions, subscription and plan features. The repository includes feature tests checking that delegated staff cannot modify an owner's account, escalate their own role, grant permissions outside their role or cross shop boundaries.
+
+These test cases make the intended privilege boundaries explicit and provide a starting point for reviewing changes to staff administration.
+
+[Workspace middleware](app/Http/Middleware/ShareWorkspace.php) · [Permission definitions](app/Support/Permissions.php) · [Staff account protection tests](tests/Feature/StaffAccountProtectionTest.php)
+
+### Queue offline work without claiming offline verification
+
+The service worker caches the POS shell and stores offline sale submissions in IndexedDB for later synchronization. The register must first be opened online to populate its cache.
+
+An offline queue preserves a submission; it does not confirm payment or guarantee current shared stock. Synchronization and provider verification still depend on connectivity and the server accepting the operation.
+
+[Service worker](public/sw.js)
+
+## The wider product
+
+- **Point of sale:** product selection, held sales, receipts, supported payment methods and payment-status checks.
+- **Inventory and branches:** product variants, stock adjustments, transfers, imports and restock monitoring.
+- **Online storefronts:** merchant store links, product pages, carts, checkout and order tracking.
+- **Customers and suppliers:** customer records, purchase orders and supplier communication.
+- **Business operations:** expense, ledger, reporting, payroll and tax-related workflows.
+- **Team accountability:** staff roles, granular permissions, PIN access, activity history and audit records.
+- **Platform administration:** tenant review, plans, subscriptions, billing, settings and support.
+
+Availability depends on the merchant's plan, staff permissions and configured providers.
+
+## Technology
+
+<img src="https://skillicons.dev/icons?i=php,laravel,tailwind,vite,postgres&amp;theme=light" width="250" alt="PHP, Laravel, Tailwind CSS, Vite and PostgreSQL" />
+
+- **Application:** Laravel 13, PHP and Eloquent, organized as a monolith.
+- **Interface:** server-rendered Blade views, Tailwind CSS 4 and browser JavaScript.
+- **Assets:** Vite 8 and the Laravel Vite plugin.
+- **Database:** PostgreSQL in the example environment.
+- **Background work:** Laravel jobs, database queues and scheduled commands.
+- **Offline support:** service worker, Cache API and IndexedDB.
+- **Payments:** Flutterwave and Paystack implementations behind a common interface.
+- **Development tools:** PHPUnit and Laravel Pint.
+
+The monolith keeps merchant operations, storefronts and platform administration in one application. Shared service classes express the business workflows instead of duplicating them across channels.
+
+## Screenshots
+
+<details>
+<summary>Sign-in experience</summary>
+
+![SalesDock sign-in screen](public/readme/login.png)
+
+</details>
 
 ## Run locally
 
 ### Requirements
 
-- PHP 8.5 for parity with this build, Composer, and the PHP extensions required by the locked dependencies.
-- Node.js 22.12+ and npm, compatible with the locked Vite 8 toolchain.
-- PostgreSQL for the default `.env.example` configuration. Create an empty local `salesdock` database before migrating.
+- PHP **8.5** to match the project's documented development environment, Composer and the extensions required by the locked dependencies.
+- Node.js and npm compatible with the locked Vite 8 toolchain.
+- PostgreSQL with an empty local `salesdock` database for the example configuration.
+- The PHP SQLite extension for the configured test database.
 
-### Installation
+### Install and configure
 
 ```bash
 git clone https://github.com/thatmanfrancis/Salesdock.git
 cd Salesdock
 composer install
+cp .env.example .env
 ```
 
-Copy `.env.example` to `.env`, then set `APP_NAME=SalesDock`, your local `APP_URL`, and the `DB_*` values for your local database. The example environment uses PostgreSQL and database-backed sessions, cache, and queues.
+Set `APP_NAME=SalesDock`, the local `APP_URL` and the `DB_*` values. The example configuration uses PostgreSQL and database-backed sessions, cache and queues.
 
 ```bash
 php artisan key:generate --no-interaction
@@ -121,52 +157,64 @@ npm run build
 composer run dev
 ```
 
-For a seeded local administrator, review `database/seeders/DatabaseSeeder.php` and run `php artisan db:seed --no-interaction` **only against a disposable local database**. It creates or updates an administrator with fixed development credentials and resets that account's password and authentication settings. Those credentials are defined in the seeder.
+Use the local address reported by the development command and align `APP_URL` with it.
 
-Registration, merchant approval, and plan selection are application workflows; a fresh database is not a populated merchant demonstration.
+### Development accounts
 
-### Connected services
+Review [DatabaseSeeder](database/seeders/DatabaseSeeder.php) before seeding. It creates or updates a development administrator with fixed credentials and resets that account's password and authentication settings. Run it only against a disposable local database:
 
-| Capability | Integration |
-| --- | --- |
-| Payments | Flutterwave or Paystack |
-| Delivery | Fez Delivery, with merchant-owned delivery accounts |
-| Transactional email | ZeptoMail |
-| WhatsApp messaging | Zoho SalesIQ |
-| Bot checks | Cloudflare Turnstile |
-| Support chat | Tawk |
-| Analytics | Google Analytics 4 |
+```bash
+php artisan db:seed --no-interaction
+```
 
-Use `.env.example` as the configuration reference. Where supported, platform administration settings take precedence over environment bootstrap values. Provider-dependent flows need valid credentials; use sandbox accounts for local development.
+A fresh database is not a populated merchant demo. Registration, merchant approval and plan selection remain application workflows.
 
-Queue-backed features need a running worker. Scheduled features include subscription lifecycle tasks, tax filing generation, delivery updates, and POS payment reconciliation. Run these in separate terminals when exercising those workflows locally:
+### Connected services and background work
+
+The repository documents integrations for Flutterwave/Paystack payments, Fez Delivery, ZeptoMail, Zoho SalesIQ messaging, Turnstile, support chat and analytics. Use `.env.example` and the relevant platform settings as configuration references. Provider-dependent flows require working credentials; use sandbox accounts when testing payments.
+
+When exercising background or scheduled workflows, run the following in separate terminals if they are not already started by the development command:
 
 ```bash
 php artisan queue:work --no-interaction
 php artisan schedule:work --no-interaction
 ```
 
-## Development checks
+## Tests and development checks
+
+Run the focused suites for the contribution areas discussed above:
 
 ```bash
-# Run the test suite
+php artisan test --compact tests/Feature/PosPaymentTest.php
+php artisan test --compact tests/Feature/StaffAccountProtectionTest.php
+php artisan test --compact tests/Unit/StoreCartTest.php
+```
+
+For the full suite and frontend asset build:
+
+```bash
 php artisan test --compact
-
-# Build frontend assets
 npm run build
+```
 
-# Format changed PHP files
+The test configuration uses in-memory SQLite, array-backed mail/session/cache and a synchronous queue. Existing cases cover payment confirmation, duplicate submissions, missed-webhook reconciliation, branch reservations and tenant/staff access boundaries, alongside other application tests.
+
+These cases describe the repository's regression checks, not a newly executed test report. SQLite tests also do not establish PostgreSQL locking behavior under concurrent production traffic; verify that separately when evaluating transaction throughput or race conditions.
+
+For changed PHP files, the repository's formatting command is:
+
+```bash
 vendor/bin/pint --dirty --format agent
 ```
 
-Tests use an in-memory SQLite database through `phpunit.xml`; enable the corresponding PHP SQLite extension before running them. Existing coverage includes POS payments, payment configuration, catalogue imports, profile PINs, and storefront cart behaviour.
+## Further work
+
+- Exercise payment retries, offline synchronization and stock reservations under PostgreSQL concurrency.
+- Measure checkout completion, inventory reconciliation exceptions and payment-recovery behavior before publishing improvement figures.
+- Keep provider setup, role permissions and operational runbooks aligned with changes to the application.
 
 ---
 
-<div align="center">
-
-**Built by Town Growers. Built around the business behind every sale.**
+**Product: Town Growers. Full-stack engineering contribution: [Francis Uzoigwe](https://github.com/thatmanfrancis).**
 
 [Explore SalesDock](https://salesdock.ng)
-
-</div>
